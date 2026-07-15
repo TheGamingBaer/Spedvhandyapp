@@ -1,0 +1,734 @@
+{
+  "fetchedAt": "2026-07-15T03:52:24.940Z",
+  "openapi": "3.0.4",
+  "title": "SpedV API",
+  "version": "v1",
+  "servers": [
+    {
+      "url": "https://api.sped-v.de",
+      "description": "SpedV REST API"
+    }
+  ],
+  "securitySchemes": {
+    "apikey": {
+      "type": "apiKey",
+      "name": "X-Api-Key",
+      "in": "header"
+    },
+    "jwtToken": {
+      "type": "http",
+      "scheme": "Bearer",
+      "bearerFormat": "JWT"
+    }
+  },
+  "authRelatedOperations": [
+    {
+      "path": "/v1/auth/clientkey",
+      "method": "GET",
+      "parameters": [
+        {
+          "name": "key",
+          "in": "query",
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
+          "name": "refresh",
+          "in": "query",
+          "schema": {
+            "type": "string",
+            "default": ""
+          }
+        }
+      ]
+    },
+    {
+      "path": "/v1/auth/steamticket",
+      "method": "GET",
+      "parameters": [
+        {
+          "name": "ticket",
+          "in": "query",
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
+          "name": "hwid",
+          "in": "query",
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
+          "name": "pcname",
+          "in": "query",
+          "schema": {
+            "type": "string"
+          }
+        }
+      ]
+    },
+    {
+      "path": "/v1/auth/register/steamticket",
+      "method": "GET",
+      "parameters": [
+        {
+          "name": "ticket",
+          "in": "query",
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
+          "name": "hwid",
+          "in": "query",
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
+          "name": "pcname",
+          "in": "query",
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
+          "name": "username",
+          "in": "query",
+          "schema": {
+            "type": "string"
+          }
+        }
+      ]
+    },
+    {
+      "path": "/v1/auth/steamopenid",
+      "method": "GET"
+    },
+    {
+      "path": "/v1/auth/steamopenid/login",
+      "method": "GET",
+      "parameters": [
+        {
+          "name": "requestId",
+          "in": "query",
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
+          "name": "pcName",
+          "in": "query",
+          "schema": {
+            "type": "string"
+          }
+        }
+      ]
+    },
+    {
+      "path": "/v1/auth/steamopenid/register",
+      "method": "GET",
+      "parameters": [
+        {
+          "name": "requestId",
+          "in": "query",
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
+          "name": "pcName",
+          "in": "query",
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
+          "name": "username",
+          "in": "query",
+          "schema": {
+            "type": "string"
+          }
+        }
+      ]
+    },
+    {
+      "path": "/v1/auth/claims/jwt",
+      "method": "GET",
+      "security": [
+        {
+          "jwtToken": [
+            "JWTBearer"
+          ]
+        }
+      ]
+    },
+    {
+      "path": "/v1/auth/claims/apikey",
+      "method": "GET",
+      "security": [
+        {
+          "jwtToken": [
+            "JWTBearer"
+          ]
+        },
+        {
+          "apikey": [
+            "ApiKey"
+          ]
+        }
+      ]
+    },
+    {
+      "path": "/v1/bankaccounts",
+      "method": "GET",
+      "security": [
+        {
+          "jwtToken": [
+            "JWTBearer"
+          ]
+        },
+        {
+          "apikey": [
+            "ApiKey"
+          ]
+        }
+      ]
+    },
+    {
+      "path": "/v1/bankaccounts/{accountId}",
+      "method": "GET",
+      "security": [
+        {
+          "jwtToken": [
+            "JWTBearer"
+          ]
+        },
+        {
+          "apikey": [
+            "ApiKey"
+          ]
+        }
+      ],
+      "parameters": [
+        {
+          "name": "accountId",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "integer",
+            "format": "int32"
+          }
+        }
+      ]
+    },
+    {
+      "path": "/v1/bankaccounts/{iban}",
+      "method": "GET",
+      "security": [
+        {
+          "jwtToken": [
+            "JWTBearer"
+          ]
+        },
+        {
+          "apikey": [
+            "ApiKey"
+          ]
+        }
+      ],
+      "parameters": [
+        {
+          "name": "iban",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        }
+      ]
+    },
+    {
+      "path": "/v1/bankaccounts/{accountId}/transfers",
+      "method": "GET",
+      "security": [
+        {
+          "jwtToken": [
+            "JWTBearer"
+          ]
+        },
+        {
+          "apikey": [
+            "ApiKey"
+          ]
+        }
+      ],
+      "parameters": [
+        {
+          "name": "accountId",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "integer",
+            "format": "int32"
+          }
+        },
+        {
+          "name": "startDate",
+          "in": "query",
+          "schema": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      ]
+    },
+    {
+      "path": "/v1/bankaccounts/{accountId}/transfers/daily",
+      "method": "GET",
+      "security": [
+        {
+          "jwtToken": [
+            "JWTBearer"
+          ]
+        },
+        {
+          "apikey": [
+            "ApiKey"
+          ]
+        }
+      ],
+      "parameters": [
+        {
+          "name": "accountId",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "integer",
+            "format": "int32"
+          }
+        },
+        {
+          "name": "startDate",
+          "in": "query",
+          "schema": {
+            "type": "string",
+            "format": "date-time"
+          }
+        },
+        {
+          "name": "endDate",
+          "in": "query",
+          "schema": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      ]
+    },
+    {
+      "path": "/v1/bankaccounts/{accountId}/transfers/summary",
+      "method": "GET",
+      "security": [
+        {
+          "jwtToken": [
+            "JWTBearer"
+          ]
+        },
+        {
+          "apikey": [
+            "ApiKey"
+          ]
+        }
+      ],
+      "parameters": [
+        {
+          "name": "accountId",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "integer",
+            "format": "int32"
+          }
+        },
+        {
+          "name": "startDate",
+          "in": "query",
+          "schema": {
+            "type": "string",
+            "format": "date-time"
+          }
+        },
+        {
+          "name": "endDate",
+          "in": "query",
+          "schema": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      ]
+    },
+    {
+      "path": "/v1/live/onlineusers",
+      "method": "GET",
+      "security": [
+        {
+          "jwtToken": [
+            "JWTBearer"
+          ]
+        },
+        {
+          "apikey": [
+            "ApiKey"
+          ]
+        }
+      ]
+    },
+    {
+      "path": "/v1/live/onlineuser",
+      "method": "GET",
+      "security": [
+        {
+          "jwtToken": [
+            "JWTBearer"
+          ]
+        },
+        {
+          "apikey": [
+            "ApiKey"
+          ]
+        }
+      ]
+    },
+    {
+      "path": "/v1/spedition/accounts",
+      "method": "GET",
+      "security": [
+        {
+          "jwtToken": [
+            "JWTBearer"
+          ]
+        },
+        {
+          "apikey": [
+            "ApiKey"
+          ]
+        }
+      ],
+      "parameters": [
+        {
+          "name": "includePartnerships",
+          "in": "query",
+          "schema": {
+            "type": "boolean",
+            "default": false
+          }
+        }
+      ]
+    },
+    {
+      "path": "/v1/spedition/stats/user",
+      "method": "GET",
+      "security": [
+        {
+          "jwtToken": [
+            "JWTBearer"
+          ]
+        },
+        {
+          "apikey": [
+            "ApiKey"
+          ]
+        }
+      ],
+      "parameters": [
+        {
+          "name": "start",
+          "in": "query",
+          "schema": {
+            "type": "string",
+            "format": "date-time"
+          }
+        },
+        {
+          "name": "end",
+          "in": "query",
+          "schema": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      ]
+    },
+    {
+      "path": "/v1/user",
+      "method": "GET",
+      "security": [
+        {
+          "jwtToken": [
+            "JWTBearer"
+          ]
+        },
+        {
+          "apikey": [
+            "ApiKey"
+          ]
+        }
+      ]
+    },
+    {
+      "path": "/v1/users",
+      "method": "GET",
+      "security": [
+        {
+          "jwtToken": [
+            "JWTBearer"
+          ]
+        },
+        {
+          "apikey": [
+            "ApiKey"
+          ]
+        }
+      ],
+      "parameters": [
+        {
+          "name": "includeKontorPartnerships",
+          "in": "query",
+          "schema": {
+            "type": "boolean",
+            "default": false
+          }
+        },
+        {
+          "name": "includeTruckPartnerships",
+          "in": "query",
+          "schema": {
+            "type": "boolean",
+            "default": false
+          }
+        }
+      ]
+    },
+    {
+      "path": "/v1/userprofiles",
+      "method": "GET",
+      "security": [
+        {
+          "jwtToken": [
+            "JWTBearer"
+          ]
+        },
+        {
+          "apikey": [
+            "ApiKey"
+          ]
+        }
+      ],
+      "parameters": [
+        {
+          "name": "ids",
+          "in": "query",
+          "schema": {
+            "type": "array",
+            "items": {
+              "type": "integer",
+              "format": "int32"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "path": "/v1/vacations",
+      "method": "GET",
+      "security": [
+        {
+          "jwtToken": [
+            "JWTBearer"
+          ]
+        },
+        {
+          "apikey": [
+            "ApiKey"
+          ]
+        }
+      ]
+    },
+    {
+      "path": "/v1/users/{userId}/tasks",
+      "method": "GET",
+      "security": [
+        {
+          "jwtToken": [
+            "JWTBearer"
+          ]
+        },
+        {
+          "apikey": [
+            "ApiKey"
+          ]
+        }
+      ],
+      "parameters": [
+        {
+          "name": "userId",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "integer",
+            "format": "int32"
+          }
+        },
+        {
+          "name": "start",
+          "in": "query",
+          "schema": {
+            "type": "string",
+            "format": "date-time"
+          }
+        },
+        {
+          "name": "end",
+          "in": "query",
+          "schema": {
+            "type": "string",
+            "format": "date-time"
+          }
+        },
+        {
+          "name": "game",
+          "in": "query",
+          "description": "\n\n0 = ETS2\n\n1 = ATS\n\n-1 = NotSet",
+          "schema": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/FPH.SpedV.API.Enums.GameEnum"
+              }
+            ],
+            "default": -1,
+            "x-enumNames": [
+              "ETS2",
+              "ATS",
+              "NotSet"
+            ]
+          },
+          "x-enumNames": [
+            "ETS2",
+            "ATS",
+            "NotSet"
+          ]
+        },
+        {
+          "name": "onlyCurrentSped",
+          "in": "query",
+          "schema": {
+            "type": "boolean",
+            "default": false
+          }
+        }
+      ]
+    },
+    {
+      "path": "/v1/users/{userId}/omsiTrips",
+      "method": "GET",
+      "security": [
+        {
+          "jwtToken": [
+            "JWTBearer"
+          ]
+        },
+        {
+          "apikey": [
+            "ApiKey"
+          ]
+        }
+      ],
+      "parameters": [
+        {
+          "name": "userId",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "integer",
+            "format": "int32"
+          }
+        },
+        {
+          "name": "start",
+          "in": "query",
+          "schema": {
+            "type": "string",
+            "format": "date-time"
+          }
+        },
+        {
+          "name": "end",
+          "in": "query",
+          "schema": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      ]
+    },
+    {
+      "path": "/v1/users/{userId}/changelog",
+      "method": "GET",
+      "security": [
+        {
+          "jwtToken": [
+            "JWTBearer"
+          ]
+        },
+        {
+          "apikey": [
+            "ApiKey"
+          ]
+        }
+      ],
+      "parameters": [
+        {
+          "name": "userId",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "integer",
+            "format": "int32"
+          }
+        }
+      ]
+    },
+    {
+      "path": "/v1/users/{userId}/profile",
+      "method": "GET",
+      "security": [
+        {
+          "jwtToken": [
+            "JWTBearer"
+          ]
+        },
+        {
+          "apikey": [
+            "ApiKey"
+          ]
+        }
+      ],
+      "parameters": [
+        {
+          "name": "userId",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "integer",
+            "format": "int32"
+          }
+        }
+      ]
+    }
+  ]
+}
