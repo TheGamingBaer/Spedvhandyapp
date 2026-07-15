@@ -17,6 +17,25 @@ function collectColumns(rows: Record<string, unknown>[]) {
   return [...frequency.entries()].sort((a, b) => b[1] - a[1]).slice(0, 12).map(([key]) => key);
 }
 
+function objectRows(value: unknown): Record<string, unknown>[] | null {
+  return Array.isArray(value) && value.every((item) => item && typeof item === "object" && !Array.isArray(item))
+    ? value as Record<string, unknown>[]
+    : null;
+}
+
+function extractRows(data: unknown): Record<string, unknown>[] | null {
+  const direct = objectRows(data);
+  if (direct) return direct;
+  if (!data || typeof data !== "object" || Array.isArray(data)) return null;
+
+  const record = data as Record<string, unknown>;
+  for (const key of ["items", "data", "results", "records", "entries", "value", "content"]) {
+    const rows = objectRows(record[key]);
+    if (rows) return rows;
+  }
+  return null;
+}
+
 function download(filename: string, content: BlobPart, type: string) {
   const blob = new Blob([content], { type });
   const url = URL.createObjectURL(blob);
@@ -33,30 +52,32 @@ function toCsv(rows: Record<string, unknown>[], columns: string[]) {
 }
 
 export function DataView({ data, title = "spedv-data" }: { data: unknown; title?: string }) {
-  const rows = useMemo(() => Array.isArray(data) && data.every((item) => item && typeof item === "object" && !Array.isArray(item)) ? data as Record<string, unknown>[] : null, [data]);
+  const rows = useMemo(() => extractRows(data), [data]);
   const columns = useMemo(() => rows ? collectColumns(rows) : [], [rows]);
-  const [mode, setMode] = useState<"table" | "json">(rows ? "table" : "json");
+  const [mode, setMode] = useState<"table" | "json">("table");
+  const visibleMode = rows ? mode : "json";
 
   return (
     <div className="response">
       <div className="response-head">
-        <div style={{ display: "flex", gap: 7 }}>
+        <div style={{ display: "flex", gap: 7, alignItems: "center" }}>
           {rows && (
-            <button className={`chip ${mode === "table" ? "active" : ""}`} onClick={() => setMode("table")}>
+            <button className={`chip ${visibleMode === "table" ? "active" : ""}`} onClick={() => setMode("table")}>
               <Table2 size={13} /> Tabelle
             </button>
           )}
-          <button className={`chip ${mode === "json" ? "active" : ""}`} onClick={() => setMode("json")}>
+          <button className={`chip ${visibleMode === "json" ? "active" : ""}`} onClick={() => setMode("json")}>
             <Braces size={13} /> JSON
           </button>
+          {rows && <span className="badge">{rows.length} Einträge</span>}
         </div>
         <button className="button ghost icon-button" aria-label="Daten exportieren" onClick={() => {
-          if (mode === "table" && rows) download(`${title}.csv`, toCsv(rows, columns), "text/csv;charset=utf-8");
+          if (visibleMode === "table" && rows) download(`${title}.csv`, toCsv(rows, columns), "text/csv;charset=utf-8");
           else download(`${title}.json`, JSON.stringify(data, null, 2), "application/json");
         }}><Download size={17} /></button>
       </div>
       <div className="response-body">
-        {mode === "table" && rows ? (
+        {visibleMode === "table" && rows ? (
           <div className="table-wrap">
             <table>
               <thead><tr>{columns.map((column) => <th key={column}>{column}</th>)}</tr></thead>
