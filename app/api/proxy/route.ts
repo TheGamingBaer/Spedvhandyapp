@@ -37,6 +37,7 @@ const requestSchema = z.object({
 });
 
 type Payload = z.infer<typeof requestSchema>;
+type JsonRecord = Record<string, unknown>;
 
 type AuthAttempt = {
   id: string;
@@ -88,93 +89,144 @@ function createBody(payload: Payload, headers: Headers): BodyInit | undefined {
   return new URLSearchParams(payload.body as Record<string, string>);
 }
 
-function buildAuthAttempts(payload: Payload): AuthAttempt[] {
+function extractToken(value: unknown, depth = 0): string | undefined {
+  if (depth > 5 || value == null) return undefined;
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    if (trimmed.split(".").length === 3 || trimmed.length > 40) return trimmed;
+    return undefined;
+  }
+  if (Array.isArray(value)) {
+    for (const item of value) {
+      const token = extractToken(item, depth + 1);
+      if (token) return token;
+    }
+    return undefined;
+  }
+  if (typeof value !== "object") return undefined;
+
+  const record = value as JsonRecord;
+  for (const key of ["accessToken", "access_token", "jwt", "jwtToken", "token", "bearerToken", "idToken"]) {
+    const token = extractToken(record[key], depth + 1);
+    if (token) return token;
+  }
+  for (const nested of Object.values(record)) {
+    const token = extractToken(nested, depth + 1);
+    if (token) return token;
+  }
+  return undefined;
+}
+
+async function exchangeClientKey(key: string): Promise<string | undefined> {
+  const target = new URL("/v1/auth/clientkey", DEFAULT_BASE);
+  target.searchParams.set("key", key);
+
+  const response = await fetch(target, {
+    method: "GET",
+    headers: { Accept: "application/json, text/plain, */*" },
+    cache: "no-store",
+    redirect: "follow",
+    signal: AbortSignal.timeout(30_000),
+  });
+
+  if (!response.ok) {
+    if (response.body) await response.body.cancel().catch(() => undefined);
+    return undefined;
+  }
+
+  const text = await response.text();
+  if (!text) return undefined;
+  try {
+    return extractToken(JSON.parse(text));
+  } catch {
+    return extractToken(text);
+  }
+}
+
+function buildDirectAuthAttempts(payload: Payload): AuthAttempt[] {
   if (!payload.auth?.key) {
     return [{ id: "none", label: "Keine Authentifizierung", apply: () => undefined }];
   }
 
   const key = payload.auth.key.trim();
-  const attempts: AuthAttempt[] = [];
+  const attempts: AuthAttempt[] = [
+    {
+      id: "official-api-key",
+      label: "SPEDV X-Api-Key",
+      apply: (_url, headers) => headers.set("X-Api-Key", key),
+    },
+  ];
 
-  const addHeader = (name: string, value: string, label = `Header ${name}`) => {
+  if (payload.auth.mode === "bearer") {
     attempts.push({
-      id: `header:${name.toLowerCase()}:${value === key ? "raw" : value.split(" ")[0].toLowerCase()}`,
-      label,
-      apply: (_url, headers) => headers.set(name, value),
+      id: "openapi-bearer",
+      label: "OpenAPI Authorization",
+      apply: (_url, headers) => headers.set("Authorization", `${payload.auth?.prefix || "Bearer"} ${key}`.trim()),
     });
-  };
-
-  const addQuery = (name: string, label = `Query ${name}`) => {
+  } else if (payload.auth.mode === "query") {
     attempts.push({
-      id: `query:${name.toLowerCase()}`,
-      label,
-      apply: (url) => url.searchParams.set(name, key),
+      id: `openapi-query:${payload.auth.name.toLowerCase()}`,
+      label: `OpenAPI Query ${payload.auth.name}`,
+      apply: (url) => url.searchParams.set(payload.auth!.name, key),
     });
-  };
-
-  if (payload.auth.mode === "query") {
-    addQuery(payload.auth.name, `OpenAPI: Query ${payload.auth.name}`);
-  } else if (payload.auth.mode === "bearer") {
-    addHeader("Authorization", `${payload.auth.prefix || "Bearer"} ${key}`.trim(), "OpenAPI: Authorization");
-  } else {
-    addHeader(
-      payload.auth.name,
-      payload.auth.prefix ? `${payload.auth.prefix} ${key}` : key,
-      `OpenAPI: Header ${payload.auth.name}`,
-    );
+  } else if (payload.auth.name.toLowerCase() !== "x-api-key") {
+    attempts.push({
+      id: `openapi-header:${payload.auth.name.toLowerCase()}`,
+      label: `OpenAPI Header ${payload.auth.name}`,
+      apply: (_url, headers) => headers.set(payload.auth!.name, payload.auth?.prefix ? `${payload.auth.prefix} ${key}` : key),
+    });
   }
 
-  for (const name of [
-    "ClientKey",
-    "clientKey",
-    "Client-Key",
-    "X-Client-Key",
-    "X-API-Key",
-    "ApiKey",
-    "API-Key",
-    "api-key",
-  ]) {
-    addHeader(name, key);
-  }
-
-  addHeader("Authorization", `Bearer ${key}`, "Authorization: Bearer");
-  addHeader("Authorization", `ApiKey ${key}`, "Authorization: ApiKey");
-  addHeader("Authorization", `ClientKey ${key}`, "Authorization: ClientKey");
-  addHeader("Authorization", key, "Authorization: direkt");
-
-  for (const name of ["ClientKey", "clientKey", "client_key", "api_key", "apiKey", "apikey", "key"]) {
-    addQuery(name);
-  }
+  attempts.push({
+    id: "legacy-bearer",
+    label: "Authorization: Bearer",
+    apply: (_url, headers) => headers.set("Authorization", `Bearer ${key}`),
+  });
 
   return attempts.filter((attempt, index) => attempts.findIndex((other) => other.id === attempt.id) === index);
 }
 
+async function executeRequest(payload: Payload, target: URL, headers: Headers) {
+  return fetch(target, {
+    method: payload.method,
+    headers,
+    body: createBody(payload, headers),
+    cache: "no-store",
+    redirect: "follow",
+    signal: AbortSignal.timeout(30_000),
+  });
+}
+
 async function fetchWithAuthFallback(payload: Payload, targetTemplate: URL, headersTemplate: Headers) {
-  const attempts = buildAuthAttempts(payload);
+  const attempts = buildDirectAuthAttempts(payload);
   let upstream: Response | undefined;
   let authUsed = attempts[0]?.label || "Keine Authentifizierung";
 
-  for (let index = 0; index < attempts.length; index += 1) {
-    const attempt = attempts[index];
+  for (const attempt of attempts) {
     const target = new URL(targetTemplate);
     const headers = new Headers(headersTemplate);
     attempt.apply(target, headers);
 
-    const response = await fetch(target, {
-      method: payload.method,
-      headers,
-      body: createBody(payload, headers),
-      cache: "no-store",
-      redirect: "follow",
-      signal: AbortSignal.timeout(30_000),
-    });
-
+    const response = await executeRequest(payload, target, headers);
     upstream = response;
     authUsed = attempt.label;
 
-    const shouldRetry = AUTH_REJECTION_STATUSES.has(response.status) && index < attempts.length - 1;
-    if (!shouldRetry) break;
+    if (!AUTH_REJECTION_STATUSES.has(response.status)) return { upstream, authUsed };
     if (response.body) await response.body.cancel().catch(() => undefined);
+  }
+
+  const rawKey = payload.auth?.key.trim();
+  const isClientKeyEndpoint = targetTemplate.pathname === "/v1/auth/clientkey";
+  if (rawKey && !isClientKeyEndpoint) {
+    const token = await exchangeClientKey(rawKey);
+    if (token) {
+      const target = new URL(targetTemplate);
+      const headers = new Headers(headersTemplate);
+      headers.set("Authorization", `Bearer ${token}`);
+      upstream = await executeRequest(payload, target, headers);
+      authUsed = "SPEDV Client-Key → Bearer JWT";
+      return { upstream, authUsed };
+    }
   }
 
   if (!upstream) throw new Error("SPEDV hat keine Antwort geliefert.");
