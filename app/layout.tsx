@@ -6,6 +6,17 @@ export const metadata: Metadata = {
   title: "SPEDV Mobile",
   description: "Private, vollständige SPEDV-Oberfläche für iPhone und Browser.",
   applicationName: "SPEDV Mobile",
+  referrer: "no-referrer",
+  robots: {
+    index: false,
+    follow: false,
+    nocache: true,
+    googleBot: {
+      index: false,
+      follow: false,
+      noimageindex: true,
+    },
+  },
   appleWebApp: {
     capable: true,
     statusBarStyle: "black-translucent",
@@ -20,9 +31,10 @@ export const metadata: Metadata = {
 export const viewport: Viewport = {
   width: "device-width",
   initialScale: 1,
-  maximumScale: 1,
-  userScalable: false,
+  maximumScale: 5,
+  userScalable: true,
   viewportFit: "cover",
+  colorScheme: "light dark",
   themeColor: [
     { media: "(prefers-color-scheme: light)", color: "#f4f6fb" },
     { media: "(prefers-color-scheme: dark)", color: "#090b10" },
