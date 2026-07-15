@@ -19,6 +19,21 @@ jobs:
       - name: Install dependencies
         run: npm install --silent
       - name: TypeScript
-        run: npm run typecheck --silent
+        id: typecheck
+        continue-on-error: true
+        run: npm run typecheck --silent > typecheck.log 2>&1
+      - name: Upload TypeScript diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: typecheck-diagnostics
+          path: typecheck.log
+          retention-days: 1
+      - name: Fail on TypeScript errors
+        if: steps.typecheck.outcome == 'failure'
+        run: |
+          cat typecheck.log
+          exit 1
       - name: Production build
+        if: steps.typecheck.outcome == 'success'
         run: npm run build --silent
