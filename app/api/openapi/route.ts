@@ -17,6 +17,17 @@ function isAllowed(url: URL) {
   return url.protocol === "https:" && ALLOWED_HOSTS.has(url.hostname);
 }
 
+function prioritizeOfficialApiKeyProbe(spec: Record<string, any>) {
+  const probePath = "/v1/auth/claims/apikey";
+  const probe = spec.paths?.[probePath];
+  if (!probe?.get) return spec;
+
+  probe.get.summary = "User account API key status";
+  probe.get.description = "Official SPEDV endpoint used to validate X-Api-Key authentication.";
+  spec.paths = { [probePath]: probe, ...spec.paths };
+  return spec;
+}
+
 export async function GET(request: NextRequest) {
   const custom = request.nextUrl.searchParams.get("url");
   const urls: URL[] = [];
@@ -45,7 +56,7 @@ export async function GET(request: NextRequest) {
       attempts.push({ url: url.toString(), status: response.status });
       if (!response.ok) continue;
       const text = await response.text();
-      const parsed = JSON.parse(text);
+      const parsed = prioritizeOfficialApiKeyProbe(JSON.parse(text));
       if (!parsed?.paths) continue;
       return NextResponse.json(parsed, {
         headers: {
