@@ -1,7 +1,8 @@
-const CACHE = "spedv-mobile-shell-v3";
+const CACHE = "spedv-mobile-shell-v4";
 const SHELL = ["/", "/manifest.webmanifest", "/icons/spedv-mobile.svg"];
 const MAX_ENTRIES = 60;
 const NETWORK_TIMEOUT_MS = 8000;
+const CACHEABLE_DESTINATIONS = new Set(["style", "script", "font", "image", "manifest"]);
 
 async function trimCache(cache) {
   const keys = await cache.keys();
@@ -10,7 +11,9 @@ async function trimCache(cache) {
 }
 
 function isCacheable(response) {
-  return response && response.ok && (response.type === "basic" || response.type === "default");
+  if (!response || !response.ok || (response.type !== "basic" && response.type !== "default")) return false;
+  const cacheControl = response.headers.get("cache-control") || "";
+  return !/(?:^|,)\s*(?:no-store|private)\b/i.test(cacheControl);
 }
 
 async function cacheResponse(request, response) {
@@ -40,16 +43,34 @@ async function handleNavigation(request) {
   }
 }
 
-async function handleAsset(request) {
-  const cached = await caches.match(request);
-  const network = fetch(request)
-    .then(async (response) => {
-      await cacheResponse(request, response);
-      return response;
-    })
-    .catch(() => undefined);
+async function updateAsset(request) {
+  try {
+    const response = await fetch(request);
+    await cacheResponse(request, response);
+    return response;
+  } catch {
+    return undefined;
+  }
+}
 
-  return cached || (await network) || Response.error();
+async function handleAsset(event, request) {
+  const cached = await caches.match(request);
+  const network = updateAsset(request);
+
+  if (cached) {
+    event.waitUntil(network);
+    return cached;
+  }
+
+  return (await network) || Response.error();
+}
+
+function shouldBypass(request, url) {
+  if (request.method !== "GET" || url.origin !== self.location.origin) return true;
+  if (url.pathname.startsWith("/api/")) return true;
+  if (url.searchParams.has("_rsc") || request.headers.get("rsc") === "1") return true;
+  if (request.headers.has("range")) return true;
+  return false;
 }
 
 self.addEventListener("install", (event) => {
@@ -72,12 +93,13 @@ self.addEventListener("fetch", (event) => {
   const request = event.request;
   const url = new URL(request.url);
 
-  if (request.method !== "GET" || url.origin !== self.location.origin || url.pathname.startsWith("/api/")) return;
+  if (shouldBypass(request, url)) return;
 
   if (request.mode === "navigate") {
     event.respondWith(handleNavigation(request));
     return;
   }
 
-  event.respondWith(handleAsset(request));
+  if (!CACHEABLE_DESTINATIONS.has(request.destination)) return;
+  event.respondWith(handleAsset(event, request));
 });
