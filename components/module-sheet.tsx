@@ -69,26 +69,49 @@ export function ModuleSheet({ module, cachedResponses, loadingEndpointIds, onRef
   const additional = module.endpoints.filter((endpoint) => !automatic.some((candidate) => candidate.id === endpoint.id));
   const isLoading = automatic.some((endpoint) => loadingEndpointIds.includes(endpoint.id));
   const closeButtonRef = useRef<HTMLButtonElement>(null);
+  const sheetRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     const previousOverflow = document.body.style.overflow;
+    const previousFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
     document.body.style.overflow = "hidden";
     closeButtonRef.current?.focus();
 
     const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") onClose();
+      if (event.key === "Escape") {
+        event.preventDefault();
+        onClose();
+        return;
+      }
+
+      if (event.key !== "Tab" || !sheetRef.current) return;
+      const focusable = Array.from(sheetRef.current.querySelectorAll<HTMLElement>(
+        'button:not([disabled]), a[href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])',
+      )).filter((element) => !element.hasAttribute("hidden") && element.getAttribute("aria-hidden") !== "true");
+      if (!focusable.length) return;
+
+      const first = focusable[0];
+      const last = focusable[focusable.length - 1];
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault();
+        first.focus();
+      }
     };
     window.addEventListener("keydown", handleKeyDown);
 
     return () => {
       document.body.style.overflow = previousOverflow;
       window.removeEventListener("keydown", handleKeyDown);
+      previousFocus?.focus();
     };
   }, [onClose]);
 
   return (
     <div className="sheet-backdrop" role="presentation" onMouseDown={(event) => event.target === event.currentTarget && onClose()}>
-      <div className="sheet module-sheet" role="dialog" aria-modal="true" aria-labelledby="module-sheet-title" aria-describedby="module-sheet-description">
+      <div ref={sheetRef} className="sheet module-sheet" role="dialog" aria-modal="true" aria-labelledby="module-sheet-title" aria-describedby="module-sheet-description">
         <div className="sheet-handle" aria-hidden="true" />
         <div className="sheet-head">
           <div style={{ minWidth: 0 }}>
