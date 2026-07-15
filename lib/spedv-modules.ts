@@ -20,6 +20,7 @@ export interface SpedvModuleDefinition {
   icon: SpedvModuleIcon;
   exactPaths: string[];
   keywords: RegExp[];
+  autoLimit?: number;
 }
 
 export interface ResolvedSpedvModule {
@@ -37,8 +38,9 @@ const DEFINITIONS: SpedvModuleDefinition[] = [
     title: "Mein Profil",
     description: "Benutzerkonto, Rollen und persönliche SPEDV-Daten",
     icon: "profile",
-    exactPaths: ["/v1/user", "/v1/auth/claims/apikey"],
-    keywords: [/\/user$/i, /profile/i, /claims\/apikey/i],
+    exactPaths: ["/v1/user"],
+    keywords: [/\/user$/i, /profile/i],
+    autoLimit: 2,
   },
   {
     id: "company",
@@ -46,7 +48,8 @@ const DEFINITIONS: SpedvModuleDefinition[] = [
     description: "Spedition, Partnerschaften und Konten",
     icon: "company",
     exactPaths: ["/v1/spedition/accounts"],
-    keywords: [/company/i, /partnership/i, /spedition.*account/i],
+    keywords: [/company/i, /partnership/i, /spedition.*account/i, /spedition/i],
+    autoLimit: 4,
   },
   {
     id: "orders",
@@ -54,7 +57,8 @@ const DEFINITIONS: SpedvModuleDefinition[] = [
     description: "Transportaufträge, Touren und Lieferungen",
     icon: "orders",
     exactPaths: ["/v1/orders", "/v1/jobs", "/v1/tours"],
-    keywords: [/order/i, /auftrag/i, /job/i, /tour/i, /shipment/i, /transport/i, /freight/i],
+    keywords: [/order/i, /auftrag/i, /job/i, /tour/i, /shipment/i, /transport/i, /freight/i, /task/i],
+    autoLimit: 4,
   },
   {
     id: "vehicles",
@@ -62,7 +66,8 @@ const DEFINITIONS: SpedvModuleDefinition[] = [
     description: "LKW, Trailer und Fahrzeugdaten",
     icon: "vehicles",
     exactPaths: ["/v1/vehicles", "/v1/trucks", "/v1/trailers"],
-    keywords: [/vehicle/i, /truck/i, /trailer/i, /fleet/i, /fahrzeug/i],
+    keywords: [/vehicle/i, /truck/i, /trailer/i, /fleet/i, /fahrzeug/i, /maintenance/i],
+    autoLimit: 4,
   },
   {
     id: "drivers",
@@ -71,22 +76,25 @@ const DEFINITIONS: SpedvModuleDefinition[] = [
     icon: "drivers",
     exactPaths: ["/v1/users", "/v1/userprofiles"],
     keywords: [/driver/i, /fahrer/i, /users$/i, /userprofiles/i, /employee/i],
+    autoLimit: 3,
   },
   {
     id: "online",
     title: "Live-Status",
-    description: "Aktuell aktive und online befindliche Nutzer",
+    description: "Aktuell aktive Nutzer, Fahrten und Live-Daten",
     icon: "online",
     exactPaths: ["/v1/live/onlineusers", "/v1/live/onlineuser"],
-    keywords: [/onlineusers/i, /live.*user/i, /online/i],
+    keywords: [/onlineusers/i, /live.*user/i, /online/i, /convoy/i],
+    autoLimit: 3,
   },
   {
     id: "stats",
     title: "Statistiken",
-    description: "Leistung, Kilometer und Auswertungen",
+    description: "Leistung, Kilometer, Umsatz und Platzierungen",
     icon: "stats",
     exactPaths: ["/v1/spedition/stats/user"],
-    keywords: [/stats/i, /statistics/i, /summary/i, /dashboard/i, /overview/i],
+    keywords: [/stats/i, /statistics/i, /summary/i, /dashboard/i, /overview/i, /ranking/i, /place/i],
+    autoLimit: 4,
   },
   {
     id: "vacations",
@@ -95,6 +103,7 @@ const DEFINITIONS: SpedvModuleDefinition[] = [
     icon: "vacations",
     exactPaths: ["/v1/vacations"],
     keywords: [/vacation/i, /absence/i, /urlaub/i],
+    autoLimit: 2,
   },
   {
     id: "bank",
@@ -102,7 +111,8 @@ const DEFINITIONS: SpedvModuleDefinition[] = [
     description: "Bankkonten, Buchungen und Übersichten",
     icon: "bank",
     exactPaths: ["/v1/bankaccounts"],
-    keywords: [/bankaccount/i, /finance/i, /transfer/i, /payment/i],
+    keywords: [/bankaccount/i, /finance/i, /transfer/i, /payment/i, /money/i],
+    autoLimit: 3,
   },
   {
     id: "documents",
@@ -110,13 +120,15 @@ const DEFINITIONS: SpedvModuleDefinition[] = [
     description: "Dokumente, Archive und Dateien",
     icon: "documents",
     exactPaths: ["/v1/documents", "/v1/files"],
-    keywords: [/document/i, /archive/i, /file/i, /attachment/i],
+    keywords: [/document/i, /archive/i, /file/i, /attachment/i, /skin/i],
+    autoLimit: 3,
   },
 ];
 
 export function canLoadAutomatically(endpoint: ApiEndpoint) {
   if (endpoint.method !== "get") return false;
-  if (/\/auth\/(clientkey|steamticket|register|steamopenid)/i.test(endpoint.path)) return false;
+  if (/\/auth\/(clientkey|steamticket|register|steamopenid|claims)/i.test(endpoint.path)) return false;
+  if (/\/(download|export|image|file)\b/i.test(endpoint.path) && endpoint.produces.some((type) => !type.includes("json") && !type.includes("text"))) return false;
   return !endpoint.parameters.some(
     (parameter) => parameter.required && ["path", "query", "header"].includes(parameter.in),
   );
@@ -132,6 +144,26 @@ function titleCase(value: string) {
     .replace(/[-_]/g, " ")
     .replace(/([a-z])([A-Z])/g, "$1 $2")
     .replace(/\b\w/g, (character) => character.toUpperCase());
+}
+
+function automaticScore(endpoint: ApiEndpoint, exactPaths: string[]) {
+  let score = 0;
+  const text = `${endpoint.path} ${endpoint.summary} ${endpoint.operationId || ""}`;
+  if (exactPaths.some((path) => path.toLowerCase() === endpoint.path.toLowerCase())) score += 1000;
+  if (/\b(my|current|overview|dashboard|summary|list|all|online|accounts|stats|status)\b/i.test(text)) score += 100;
+  if (/\b(search|history|archive|export|download|lookup|validate|test)\b/i.test(text)) score -= 80;
+  score -= endpoint.parameters.length * 8;
+  score -= endpoint.path.split("/").filter(Boolean).length * 3;
+  return score;
+}
+
+function selectAutomatic(endpoints: ApiEndpoint[], definition?: SpedvModuleDefinition) {
+  const exactPaths = definition?.exactPaths || [];
+  const limit = definition?.autoLimit || 2;
+  return endpoints
+    .filter(canLoadAutomatically)
+    .sort((a, b) => automaticScore(b, exactPaths) - automaticScore(a, exactPaths) || a.path.localeCompare(b.path))
+    .slice(0, limit);
 }
 
 export function buildSpedvModules(endpoints: ApiEndpoint[]): ResolvedSpedvModule[] {
@@ -167,7 +199,7 @@ export function buildSpedvModules(endpoints: ApiEndpoint[]): ResolvedSpedvModule
       description: definition.description,
       icon: definition.icon,
       endpoints: matching,
-      automaticEndpoints: matching.filter(canLoadAutomatically),
+      automaticEndpoints: selectAutomatic(matching, definition),
     }];
   });
 
@@ -186,7 +218,7 @@ export function buildSpedvModules(endpoints: ApiEndpoint[]): ResolvedSpedvModule
       description: `${matching.length} SPEDV-Funktionen in diesem Bereich`,
       icon: "generic",
       endpoints: matching,
-      automaticEndpoints: matching.filter(canLoadAutomatically),
+      automaticEndpoints: selectAutomatic(matching),
     });
   }
 
