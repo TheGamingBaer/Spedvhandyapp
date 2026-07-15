@@ -6,6 +6,7 @@ export const runtime = "nodejs";
 
 const DEFAULT_BASE = process.env.SPEDV_API_BASE_URL || "https://api.sped-v.de";
 const ALLOWED_HOSTS = new Set(["api.sped-v.de"]);
+const AUTH_REJECTION_STATUSES = new Set([401, 403]);
 
 const authSchema = z.object({
   key: z.string().min(1).max(4096),
@@ -35,14 +36,154 @@ const requestSchema = z.object({
   }).optional(),
 });
 
+type Payload = z.infer<typeof requestSchema>;
+
+type AuthAttempt = {
+  id: string;
+  label: string;
+  apply: (url: URL, headers: Headers) => void;
+};
+
 function safeFilename(contentDisposition: string | null) {
   const match = contentDisposition?.match(/filename\*?=(?:UTF-8''|")?([^";]+)/i);
   return match?.[1] ? decodeURIComponent(match[1].replace(/"/g, "")) : undefined;
 }
 
+function createBaseTarget(payload: Payload) {
+  const target = new URL(payload.path, DEFAULT_BASE);
+  for (const [key, raw] of Object.entries(payload.query || {})) {
+    const values = Array.isArray(raw) ? raw : [raw];
+    for (const value of values) target.searchParams.append(key, String(value));
+  }
+  return target;
+}
+
+function createBaseHeaders(payload: Payload) {
+  const headers = new Headers({ Accept: "application/json, text/plain, */*" });
+  for (const [key, value] of Object.entries(payload.headers || {})) {
+    const normalized = key.toLowerCase();
+    if (["host", "cookie", "origin", "referer", "content-length"].includes(normalized)) continue;
+    headers.set(key, value);
+  }
+  return headers;
+}
+
+function createBody(payload: Payload, headers: Headers): BodyInit | undefined {
+  if (payload.multipart) {
+    const form = new FormData();
+    for (const [key, value] of Object.entries(payload.multipart.fields)) form.append(key, value);
+    for (const file of payload.multipart.files) {
+      const bytes = Uint8Array.from(Buffer.from(file.dataBase64, "base64"));
+      form.append(file.name, new Blob([bytes], { type: file.type || "application/octet-stream" }), file.filename);
+    }
+    return form;
+  }
+
+  if (payload.body === undefined || ["GET", "HEAD"].includes(payload.method)) return undefined;
+
+  const contentType = payload.contentType || "application/json";
+  headers.set("Content-Type", contentType);
+  if (contentType.includes("json")) return JSON.stringify(payload.body);
+  if (typeof payload.body === "string") return payload.body;
+  return new URLSearchParams(payload.body as Record<string, string>);
+}
+
+function buildAuthAttempts(payload: Payload): AuthAttempt[] {
+  if (!payload.auth?.key) {
+    return [{ id: "none", label: "Keine Authentifizierung", apply: () => undefined }];
+  }
+
+  const key = payload.auth.key.trim();
+  const attempts: AuthAttempt[] = [];
+
+  const addHeader = (name: string, value: string, label = `Header ${name}`) => {
+    attempts.push({
+      id: `header:${name.toLowerCase()}:${value === key ? "raw" : value.split(" ")[0].toLowerCase()}`,
+      label,
+      apply: (_url, headers) => headers.set(name, value),
+    });
+  };
+
+  const addQuery = (name: string, label = `Query ${name}`) => {
+    attempts.push({
+      id: `query:${name.toLowerCase()}`,
+      label,
+      apply: (url) => url.searchParams.set(name, key),
+    });
+  };
+
+  if (payload.auth.mode === "query") {
+    addQuery(payload.auth.name, `OpenAPI: Query ${payload.auth.name}`);
+  } else if (payload.auth.mode === "bearer") {
+    addHeader("Authorization", `${payload.auth.prefix || "Bearer"} ${key}`.trim(), "OpenAPI: Authorization");
+  } else {
+    addHeader(
+      payload.auth.name,
+      payload.auth.prefix ? `${payload.auth.prefix} ${key}` : key,
+      `OpenAPI: Header ${payload.auth.name}`,
+    );
+  }
+
+  for (const name of [
+    "ClientKey",
+    "clientKey",
+    "Client-Key",
+    "X-Client-Key",
+    "X-API-Key",
+    "ApiKey",
+    "API-Key",
+    "api-key",
+  ]) {
+    addHeader(name, key);
+  }
+
+  addHeader("Authorization", `Bearer ${key}`, "Authorization: Bearer");
+  addHeader("Authorization", `ApiKey ${key}`, "Authorization: ApiKey");
+  addHeader("Authorization", `ClientKey ${key}`, "Authorization: ClientKey");
+  addHeader("Authorization", key, "Authorization: direkt");
+
+  for (const name of ["ClientKey", "clientKey", "client_key", "api_key", "apiKey", "apikey", "key"]) {
+    addQuery(name);
+  }
+
+  return attempts.filter((attempt, index) => attempts.findIndex((other) => other.id === attempt.id) === index);
+}
+
+async function fetchWithAuthFallback(payload: Payload, targetTemplate: URL, headersTemplate: Headers) {
+  const attempts = buildAuthAttempts(payload);
+  let upstream: Response | undefined;
+  let authUsed = attempts[0]?.label || "Keine Authentifizierung";
+
+  for (let index = 0; index < attempts.length; index += 1) {
+    const attempt = attempts[index];
+    const target = new URL(targetTemplate);
+    const headers = new Headers(headersTemplate);
+    attempt.apply(target, headers);
+
+    const response = await fetch(target, {
+      method: payload.method,
+      headers,
+      body: createBody(payload, headers),
+      cache: "no-store",
+      redirect: "follow",
+      signal: AbortSignal.timeout(30_000),
+    });
+
+    upstream = response;
+    authUsed = attempt.label;
+
+    const shouldRetry = AUTH_REJECTION_STATUSES.has(response.status) && index < attempts.length - 1;
+    if (!shouldRetry) break;
+    if (response.body) await response.body.cancel().catch(() => undefined);
+  }
+
+  if (!upstream) throw new Error("SPEDV hat keine Antwort geliefert.");
+  return { upstream, authUsed };
+}
+
 async function handler(request: NextRequest) {
   const started = performance.now();
-  let payload: z.infer<typeof requestSchema>;
+  let payload: Payload;
   try {
     payload = requestSchema.parse(await request.json());
   } catch (error) {
@@ -53,60 +194,13 @@ async function handler(request: NextRequest) {
     return NextResponse.json({ error: "Ungültiger API-Pfad." }, { status: 400 });
   }
 
-  const target = new URL(payload.path, DEFAULT_BASE);
+  const target = createBaseTarget(payload);
   if (target.protocol !== "https:" || !ALLOWED_HOSTS.has(target.hostname)) {
     return NextResponse.json({ error: "Zielhost ist nicht erlaubt." }, { status: 400 });
   }
 
-  for (const [key, raw] of Object.entries(payload.query || {})) {
-    const values = Array.isArray(raw) ? raw : [raw];
-    for (const value of values) target.searchParams.append(key, String(value));
-  }
-
-  const headers = new Headers({ Accept: "application/json, text/plain, */*" });
-  for (const [key, value] of Object.entries(payload.headers || {})) {
-    const normalized = key.toLowerCase();
-    if (["host", "cookie", "origin", "referer", "content-length"].includes(normalized)) continue;
-    headers.set(key, value);
-  }
-
-  if (payload.auth) {
-    if (payload.auth.mode === "query") {
-      target.searchParams.set(payload.auth.name, payload.auth.key);
-    } else if (payload.auth.mode === "bearer") {
-      headers.set("Authorization", `${payload.auth.prefix || "Bearer"} ${payload.auth.key}`.trim());
-    } else {
-      headers.set(payload.auth.name, payload.auth.prefix ? `${payload.auth.prefix} ${payload.auth.key}` : payload.auth.key);
-    }
-  }
-
-  let body: BodyInit | undefined;
-  if (payload.multipart) {
-    const form = new FormData();
-    for (const [key, value] of Object.entries(payload.multipart.fields)) form.append(key, value);
-    for (const file of payload.multipart.files) {
-      const bytes = Uint8Array.from(Buffer.from(file.dataBase64, "base64"));
-      form.append(file.name, new Blob([bytes], { type: file.type || "application/octet-stream" }), file.filename);
-    }
-    body = form;
-  } else if (payload.body !== undefined && !["GET", "HEAD"].includes(payload.method)) {
-    const contentType = payload.contentType || "application/json";
-    headers.set("Content-Type", contentType);
-    if (contentType.includes("json")) body = JSON.stringify(payload.body);
-    else if (typeof payload.body === "string") body = payload.body;
-    else body = new URLSearchParams(payload.body as Record<string, string>);
-  }
-
   try {
-    const upstream = await fetch(target, {
-      method: payload.method,
-      headers,
-      body,
-      cache: "no-store",
-      redirect: "follow",
-      signal: AbortSignal.timeout(30_000),
-    });
-
+    const { upstream, authUsed } = await fetchWithAuthFallback(payload, target, createBaseHeaders(payload));
     const contentType = upstream.headers.get("content-type") || "application/octet-stream";
     const responseHeaders: Record<string, string> = {};
     for (const key of ["content-type", "content-disposition", "etag", "last-modified", "location", "x-total-count"]) {
@@ -138,6 +232,7 @@ async function handler(request: NextRequest) {
       headers: responseHeaders,
       data,
       binary,
+      authUsed,
       elapsedMs: Math.round(performance.now() - started),
       timestamp: new Date().toISOString(),
     });
