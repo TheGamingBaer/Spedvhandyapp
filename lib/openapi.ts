@@ -131,14 +131,27 @@ function extractAuthCandidates(spec: AnyRecord): AuthConfig[] {
     }
   }
 
+  // SPEDV has historically used client-key naming in addition to the more
+  // common API-key and bearer conventions. Keep the exact OpenAPI scheme first,
+  // then test the documented/legacy spellings without altering the supplied key.
   const fallbacks: AuthConfig[] = [
-    { mode: "bearer", name: "Authorization", prefix: "Bearer", source: "detected" },
+    { mode: "header", name: "ClientKey", source: "detected" },
+    { mode: "header", name: "clientKey", source: "detected" },
+    { mode: "header", name: "Client-Key", source: "detected" },
+    { mode: "header", name: "X-Client-Key", source: "detected" },
+    { mode: "header", name: "client-key", source: "detected" },
     { mode: "header", name: "X-API-Key", source: "detected" },
     { mode: "header", name: "api-key", source: "detected" },
     { mode: "header", name: "ApiKey", source: "detected" },
+    { mode: "header", name: "API-Key", source: "detected" },
+    { mode: "bearer", name: "Authorization", prefix: "Bearer", source: "detected" },
     { mode: "header", name: "Authorization", prefix: "ApiKey", source: "detected" },
+    { mode: "header", name: "Authorization", prefix: "ClientKey", source: "detected" },
     { mode: "header", name: "Authorization", source: "detected" },
+    { mode: "query", name: "clientKey", source: "detected" },
+    { mode: "query", name: "client_key", source: "detected" },
     { mode: "query", name: "api_key", source: "detected" },
+    { mode: "query", name: "apiKey", source: "detected" },
   ];
 
   const merged = [...candidates, ...fallbacks];
