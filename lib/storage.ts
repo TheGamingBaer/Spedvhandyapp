@@ -37,7 +37,9 @@ export function setCachedResponse(endpoint: ApiEndpoint, result: ApiCallResult) 
     endpoint: { id: endpoint.id, method: endpoint.method, path: endpoint.path, tag: endpoint.tag, summary: endpoint.summary },
     result,
   };
-  const entries = Object.entries(current).sort((a, b) => String(b[1].result.timestamp).localeCompare(String(a[1].result.timestamp))).slice(0, 40);
+  const entries = Object.entries(current)
+    .sort((a, b) => String(b[1].result.timestamp).localeCompare(String(a[1].result.timestamp)))
+    .slice(0, 200);
   write("responses", Object.fromEntries(entries));
 }
 export function clearLocalData() {
