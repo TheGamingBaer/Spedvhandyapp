@@ -46,7 +46,7 @@ const DEFINITIONS: SpedvModuleDefinition[] = [
     description: "Spedition, Partnerschaften und Konten",
     icon: "company",
     exactPaths: ["/v1/spedition/accounts"],
-    keywords: [/spedition/i, /company/i, /partnership/i],
+    keywords: [/company/i, /partnership/i, /spedition.*account/i],
   },
   {
     id: "orders",
@@ -122,8 +122,7 @@ export function canLoadAutomatically(endpoint: ApiEndpoint) {
   );
 }
 
-function matchesDefinition(endpoint: ApiEndpoint, definition: SpedvModuleDefinition) {
-  if (definition.exactPaths.some((path) => path.toLowerCase() === endpoint.path.toLowerCase())) return true;
+function matchesKeywords(endpoint: ApiEndpoint, definition: SpedvModuleDefinition) {
   const haystack = `${endpoint.path} ${endpoint.tag} ${endpoint.summary} ${endpoint.operationId || ""}`;
   return definition.keywords.some((keyword) => keyword.test(haystack));
 }
@@ -138,21 +137,39 @@ function titleCase(value: string) {
 export function buildSpedvModules(endpoints: ApiEndpoint[]): ResolvedSpedvModule[] {
   const usable = endpoints.filter((endpoint) => !/^auth$/i.test(endpoint.tag));
   const assigned = new Set<string>();
-  const modules: ResolvedSpedvModule[] = [];
+  const buckets = new Map<string, ApiEndpoint[]>();
 
   for (const definition of DEFINITIONS) {
-    const matching = usable.filter((endpoint) => !assigned.has(endpoint.id) && matchesDefinition(endpoint, definition));
-    if (!matching.length) continue;
-    matching.forEach((endpoint) => assigned.add(endpoint.id));
-    modules.push({
+    const exact = usable.filter((endpoint) =>
+      !assigned.has(endpoint.id)
+      && definition.exactPaths.some((path) => path.toLowerCase() === endpoint.path.toLowerCase()),
+    );
+    if (exact.length) {
+      buckets.set(definition.id, [...(buckets.get(definition.id) || []), ...exact]);
+      exact.forEach((endpoint) => assigned.add(endpoint.id));
+    }
+  }
+
+  for (const definition of DEFINITIONS) {
+    const matching = usable.filter((endpoint) => !assigned.has(endpoint.id) && matchesKeywords(endpoint, definition));
+    if (matching.length) {
+      buckets.set(definition.id, [...(buckets.get(definition.id) || []), ...matching]);
+      matching.forEach((endpoint) => assigned.add(endpoint.id));
+    }
+  }
+
+  const modules: ResolvedSpedvModule[] = DEFINITIONS.flatMap((definition) => {
+    const matching = buckets.get(definition.id) || [];
+    if (!matching.length) return [];
+    return [{
       id: definition.id,
       title: definition.title,
       description: definition.description,
       icon: definition.icon,
       endpoints: matching,
       automaticEndpoints: matching.filter(canLoadAutomatically),
-    });
-  }
+    }];
+  });
 
   const remainingByTag = new Map<string, ApiEndpoint[]>();
   for (const endpoint of usable) {
