@@ -6,19 +6,29 @@ const MAX_RESPONSE_CACHE_BYTES = 3_500_000;
 const MAX_SINGLE_RESPONSE_BYTES = 750_000;
 const RESPONSE_CACHE_TTL_MS = 24 * 60 * 60 * 1000;
 
+function storageKey(key: string) {
+  return `${PREFIX}${key}`;
+}
+
+function remove(key: string) {
+  if (typeof window === "undefined") return;
+  try { localStorage.removeItem(storageKey(key)); } catch { /* Storage may be unavailable in private mode. */ }
+}
+
 function read<T>(key: string, fallback: T): T {
   if (typeof window === "undefined") return fallback;
   try {
-    const raw = localStorage.getItem(`${PREFIX}${key}`);
+    const raw = localStorage.getItem(storageKey(key));
     return raw ? JSON.parse(raw) as T : fallback;
   } catch {
+    remove(key);
     return fallback;
   }
 }
 
 function write<T>(key: string, value: T) {
   if (typeof window === "undefined") return;
-  try { localStorage.setItem(`${PREFIX}${key}`, JSON.stringify(value)); } catch { /* Storage quota or private-mode limitation. */ }
+  try { localStorage.setItem(storageKey(key), JSON.stringify(value)); } catch { /* Storage quota or private-mode limitation. */ }
 }
 
 function serializedSize(value: unknown) {
@@ -55,27 +65,69 @@ function cacheSafeResult(result: ApiCallResult): ApiCallResult {
   };
 }
 
-function isFresh(item: CachedResponse, now = Date.now()) {
-  const timestamp = Date.parse(item.result.timestamp);
-  return Number.isFinite(timestamp) && now - timestamp <= RESPONSE_CACHE_TTL_MS;
+function isCachedResponse(value: unknown): value is CachedResponse {
+  if (!value || typeof value !== "object") return false;
+  const item = value as Partial<CachedResponse>;
+  return typeof item.endpointId === "string"
+    && Boolean(item.endpoint && typeof item.endpoint === "object")
+    && Boolean(item.result && typeof item.result === "object")
+    && typeof item.result?.timestamp === "string"
+    && typeof item.result?.ok === "boolean"
+    && typeof item.result?.upstreamStatus === "number";
 }
 
-export function getFavorites() { return read<string[]>("favorites", []); }
+function isFresh(item: CachedResponse, now = Date.now()) {
+  const timestamp = Date.parse(item.result.timestamp);
+  return Number.isFinite(timestamp) && now - timestamp >= 0 && now - timestamp <= RESPONSE_CACHE_TTL_MS;
+}
+
+export function getFavorites() {
+  const value = read<unknown>("favorites", []);
+  return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : [];
+}
 export function setFavorites(value: string[]) { write("favorites", value); }
-export function getHistory() { return read<HistoryItem[]>("history", []); }
+export function getHistory() {
+  const value = read<unknown>("history", []);
+  if (!Array.isArray(value)) {
+    remove("history");
+    return [];
+  }
+  return value.filter((item): item is HistoryItem => Boolean(
+    item
+    && typeof item === "object"
+    && typeof (item as HistoryItem).id === "string"
+    && typeof (item as HistoryItem).endpointId === "string"
+    && typeof (item as HistoryItem).timestamp === "string",
+  )).slice(0, 100);
+}
 export function setHistory(value: HistoryItem[]) { write("history", value.slice(0, 100)); }
 export function getAuthConfig() { return read<import("@/lib/types").AuthConfig | null>("auth", null); }
 export function setAuthConfig(value: import("@/lib/types").AuthConfig) { write("auth", value); }
-export function getWriteEnabled() { return read<boolean>("write-enabled", false); }
+export function getWriteEnabled() { return read<boolean>("write-enabled", false) === true; }
 export function setWriteEnabled(value: boolean) { write("write-enabled", value); }
 export function getCustomSpecUrl() { return read<string>("spec-url", ""); }
 export function setCustomSpecUrl(value: string) { write("spec-url", value); }
-export function getCachedSpec() { return read<Record<string, unknown> | null>("spec", null); }
+export function getCachedSpec() {
+  const value = read<unknown>("spec", null);
+  if (!value || typeof value !== "object" || !("paths" in value)) {
+    if (value !== null) remove("spec");
+    return null;
+  }
+  return value as Record<string, unknown>;
+}
 export function setCachedSpec(value: Record<string, unknown>) { write("spec", value); }
 export function getCachedResponses() {
-  const current = read<Record<string, CachedResponse>>("responses", {});
+  const raw = read<unknown>("responses", {});
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
+    remove("responses");
+    return {};
+  }
+
+  const current = Object.fromEntries(
+    Object.entries(raw).filter(([key, item]) => key.length > 0 && isCachedResponse(item)),
+  ) as Record<string, CachedResponse>;
   const fresh = Object.fromEntries(Object.entries(current).filter(([, item]) => isFresh(item)));
-  if (Object.keys(fresh).length !== Object.keys(current).length) write("responses", fresh);
+  if (Object.keys(fresh).length !== Object.keys(raw).length) write("responses", fresh);
   return fresh;
 }
 export function setCachedResponse(endpoint: ApiEndpoint, result: ApiCallResult) {
@@ -111,5 +163,7 @@ export function setCachedResponse(endpoint: ApiEndpoint, result: ApiCallResult) 
 }
 export function clearLocalData() {
   if (typeof window === "undefined") return;
-  Object.keys(localStorage).filter((key) => key.startsWith(PREFIX)).forEach((key) => localStorage.removeItem(key));
+  try {
+    Object.keys(localStorage).filter((key) => key.startsWith(PREFIX)).forEach((key) => localStorage.removeItem(key));
+  } catch { /* Storage may be unavailable in private mode. */ }
 }
