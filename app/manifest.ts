@@ -12,7 +12,7 @@ export default function manifest(): MetadataRoute.Manifest {
     theme_color: "#090b10",
     categories: ["business", "productivity"],
     icons: [
-      { src: "/icons/spedv-mobile.svg", sizes: "any", type: "image/svg+xml", purpose: "any maskable" },
+      { src: "/icons/spedv-mobile.svg", sizes: "any", type: "image/svg+xml", purpose: "maskable" },
     ],
   };
 }
