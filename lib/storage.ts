@@ -4,6 +4,7 @@ const PREFIX = "spedv-mobile:";
 const MAX_CACHED_RESPONSES = 200;
 const MAX_RESPONSE_CACHE_BYTES = 3_500_000;
 const MAX_SINGLE_RESPONSE_BYTES = 750_000;
+const RESPONSE_CACHE_TTL_MS = 24 * 60 * 60 * 1000;
 
 function read<T>(key: string, fallback: T): T {
   if (typeof window === "undefined") return fallback;
@@ -28,13 +29,35 @@ function serializedSize(value: unknown) {
   }
 }
 
+function safeErrorMessage(result: ApiCallResult) {
+  if (result.upstreamStatus === 401 || result.upstreamStatus === 403) return "Der SPEDV-Hauptschlüssel wurde abgelehnt.";
+  if (result.upstreamStatus === 429) return "SPEDV hat zu viele Anfragen erhalten. Bitte später erneut aktualisieren.";
+  if (result.upstreamStatus >= 500) return "SPEDV ist vorübergehend nicht erreichbar.";
+  return "Dieser Bereich konnte nicht geladen werden.";
+}
+
 function cacheSafeResult(result: ApiCallResult): ApiCallResult {
-  if (!result.binary) return result;
+  if (!result.ok) {
+    return {
+      ...result,
+      data: { error: safeErrorMessage(result) },
+      binary: undefined,
+      headers: {},
+    };
+  }
+
+  if (!result.binary) return { ...result, headers: {} };
   return {
     ...result,
     data: result.data ?? { message: "Die heruntergeladene Datei wird aus Sicherheits- und Speichergründen nicht offline gespeichert." },
     binary: undefined,
+    headers: {},
   };
+}
+
+function isFresh(item: CachedResponse, now = Date.now()) {
+  const timestamp = Date.parse(item.result.timestamp);
+  return Number.isFinite(timestamp) && now - timestamp <= RESPONSE_CACHE_TTL_MS;
 }
 
 export function getFavorites() { return read<string[]>("favorites", []); }
@@ -49,7 +72,12 @@ export function getCustomSpecUrl() { return read<string>("spec-url", ""); }
 export function setCustomSpecUrl(value: string) { write("spec-url", value); }
 export function getCachedSpec() { return read<Record<string, unknown> | null>("spec", null); }
 export function setCachedSpec(value: Record<string, unknown>) { write("spec", value); }
-export function getCachedResponses() { return read<Record<string, CachedResponse>>("responses", {}); }
+export function getCachedResponses() {
+  const current = read<Record<string, CachedResponse>>("responses", {});
+  const fresh = Object.fromEntries(Object.entries(current).filter(([, item]) => isFresh(item)));
+  if (Object.keys(fresh).length !== Object.keys(current).length) write("responses", fresh);
+  return fresh;
+}
 export function setCachedResponse(endpoint: ApiEndpoint, result: ApiCallResult) {
   const current = getCachedResponses();
   const safeResult = cacheSafeResult(result);
@@ -66,6 +94,7 @@ export function setCachedResponse(endpoint: ApiEndpoint, result: ApiCallResult) 
   }
 
   const entries = Object.entries(current)
+    .filter(([, item]) => isFresh(item))
     .sort((a, b) => String(b[1].result.timestamp).localeCompare(String(a[1].result.timestamp)))
     .slice(0, MAX_CACHED_RESPONSES);
 
