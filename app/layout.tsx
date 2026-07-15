@@ -1,5 +1,6 @@
 import type { Metadata, Viewport } from "next";
 import "./globals.css";
+import "./app-overrides.css";
 
 export const metadata: Metadata = {
   title: "SPEDV Mobile",
