@@ -1,7 +1,7 @@
 "use client";
 
 import { AlertTriangle, ChevronRight, Database, RefreshCw, X } from "lucide-react";
-import { DataView } from "@/components/data-view";
+import { SmartDataView } from "@/components/smart-data-view";
 import type { ApiEndpoint, CachedResponse } from "@/lib/types";
 import type { ResolvedSpedvModule } from "@/lib/spedv-modules";
 
@@ -25,25 +25,47 @@ function errorMessage(data: unknown) {
   return "SPEDV hat für diesen Bereich keine Daten geliefert.";
 }
 
+function friendlyAction(endpoint: ApiEndpoint) {
+  const summary = endpoint.summary
+    .replace(/^get\s+/i, "")
+    .replace(/^post\s+/i, "")
+    .replace(/^put\s+/i, "")
+    .replace(/^delete\s+/i, "")
+    .replace(/\bendpoint\b/gi, "")
+    .trim();
+  if (summary && !/^GET |^POST |^PUT |^PATCH |^DELETE /i.test(summary)) return summary;
+  const segment = endpoint.path.split("/").filter(Boolean).at(-1)?.replace(/[{}]/g, "") || "Details";
+  return segment.replace(/[-_]/g, " ").replace(/\b\w/g, (character) => character.toUpperCase());
+}
+
+function actionHint(endpoint: ApiEndpoint) {
+  const required = endpoint.parameters.filter((parameter) => parameter.required).length;
+  if (!endpoint.isSafeRead) return "Daten ändern · Bestätigung erforderlich";
+  if (required > 0) return `${required} Angabe${required === 1 ? "" : "n"} erforderlich`;
+  return "Detailansicht öffnen";
+}
+
 export function ModuleSheet({ module, cachedResponses, loadingEndpointIds, onRefresh, onOpenEndpoint, onClose }: Props) {
   const automatic = module.automaticEndpoints;
   const additional = module.endpoints.filter((endpoint) => !automatic.some((candidate) => candidate.id === endpoint.id));
+  const isLoading = automatic.some((endpoint) => loadingEndpointIds.includes(endpoint.id));
 
   return (
     <div className="sheet-backdrop" role="dialog" aria-modal="true" onMouseDown={(event) => event.target === event.currentTarget && onClose()}>
-      <div className="sheet">
+      <div className="sheet module-sheet">
         <div className="sheet-handle" />
         <div className="sheet-head">
           <div style={{ minWidth: 0 }}>
-            <div className="eyebrow">SPEDV Bereich</div>
+            <div className="eyebrow">SPEDV Mobile</div>
             <h2 style={{ marginTop: 7 }}>{module.title}</h2>
             <div className="section-copy">{module.description}</div>
           </div>
           <button className="button secondary icon-button" onClick={onClose} aria-label="Schließen"><X size={18} /></button>
         </div>
 
-        <button className="button secondary section" style={{ width: "100%" }} onClick={() => onRefresh(module)} disabled={automatic.some((endpoint) => loadingEndpointIds.includes(endpoint.id))}>
-          <RefreshCw size={17} /> Bereich aktualisieren
+        <button className="button secondary section" style={{ width: "100%" }} onClick={() => onRefresh(module)} disabled={isLoading || !automatic.length}>
+          {isLoading ? <span className="spinner" /> : <RefreshCw size={17} />}
+          {isLoading ? "Daten werden aktualisiert" : automatic.length ? "Bereich aktualisieren" : "Keine automatische Aktualisierung"}
         </button>
 
         <div className="section module-results">
@@ -51,35 +73,32 @@ export function ModuleSheet({ module, cachedResponses, loadingEndpointIds, onRef
             const cached = cachedResponses[endpoint.id];
             const loading = loadingEndpointIds.includes(endpoint.id);
             return (
-              <article className="card pad" key={endpoint.id}>
-                <div className="section-head" style={{ alignItems: "center" }}>
-                  <div style={{ minWidth: 0 }}>
-                    <h3>{endpoint.summary}</h3>
-                    <div className="endpoint-path">{endpoint.path}</div>
-                  </div>
-                  {loading ? <span className="spinner" /> : cached ? <span className={`badge ${cached.result.ok ? "good" : "bad"}`}>{cached.result.upstreamStatus || "ERR"}</span> : null}
+              <article className="module-result" key={endpoint.id}>
+                <div className="module-result-head">
+                  <div><h3>{friendlyAction(endpoint)}</h3><span>{module.title}</span></div>
+                  {loading ? <span className="spinner" /> : cached ? <span className={`badge ${cached.result.ok ? "good" : "bad"}`}>{cached.result.ok ? "Aktuell" : "Fehler"}</span> : null}
                 </div>
 
-                {loading && !cached && <div className="skeleton" style={{ height: 90, marginTop: 12 }} />}
-                {!loading && !cached && <div className="notice"><Database size={17} />Noch nicht geladen. Tippe auf „Bereich aktualisieren“.</div>}
-                {cached?.result.ok && <DataView data={cached.result.data} title={`spedv-${module.id}-${endpoint.operationId || endpoint.method}`} />}
+                {loading && !cached && <div className="smart-loading"><div className="skeleton" /><div className="skeleton" /><div className="skeleton" /></div>}
+                {!loading && !cached && <div className="notice"><Database size={17} />Noch keine Daten geladen.</div>}
+                {cached?.result.ok && <SmartDataView data={cached.result.data} context={friendlyAction(endpoint)} title={`spedv-${module.id}-${endpoint.operationId || endpoint.method}`} />}
                 {cached && !cached.result.ok && <div className="notice error"><AlertTriangle size={17} />{errorMessage(cached.result.data)}</div>}
               </article>
             );
           }) : (
-            <div className="notice"><Database size={17} />Dieser Bereich benötigt zuerst eine Auswahl oder ID. Die passenden Funktionen stehen direkt darunter.</div>
+            <div className="notice"><Database size={17} />Dieser Bereich benötigt zuerst eine Auswahl, Nummer oder andere Angabe. Die passenden Aktionen stehen direkt darunter.</div>
           )}
         </div>
 
         {additional.length > 0 && (
           <div className="section">
-            <div className="section-head"><div><h3>Weitere Funktionen</h3><div className="section-copy">Formulare und Detailansichten mit notwendigen Angaben</div></div></div>
-            <div className="endpoint-list">
+            <div className="section-head"><div><h3>Weitere Aktionen</h3><div className="section-copy">Nur öffnen, auswählen und die benötigten Angaben eintragen</div></div></div>
+            <div className="mobile-action-list">
               {additional.map((endpoint) => (
-                <button className="endpoint" key={endpoint.id} onClick={() => onOpenEndpoint(endpoint)}>
-                  <span className={`method ${endpoint.method}`}>{endpoint.method.toUpperCase()}</span>
-                  <span style={{ minWidth: 0 }}><span className="endpoint-title" style={{ display: "block" }}>{endpoint.summary}</span><span className="endpoint-path" style={{ display: "block" }}>{endpoint.path}</span></span>
-                  <ChevronRight size={17} color="var(--muted)" />
+                <button className="mobile-action" key={endpoint.id} onClick={() => onOpenEndpoint(endpoint)}>
+                  <div className={`mobile-action-icon ${endpoint.isSafeRead ? "read" : "write"}`}><Database size={17} /></div>
+                  <span><strong>{friendlyAction(endpoint)}</strong><small>{actionHint(endpoint)}</small></span>
+                  <ChevronRight size={18} color="var(--muted)" />
                 </button>
               ))}
             </div>
