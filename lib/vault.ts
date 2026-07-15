@@ -3,9 +3,10 @@ const STORE = "vault";
 const KEY_ID = "device-key";
 const SECRET_ID = "api-secret";
 const MAX_SECRET_LENGTH = 8_192;
+const SECRET_CONTEXT = new TextEncoder().encode("spedv-mobile:api-secret:v2");
 
 interface EncryptedSecret {
-  version: 1;
+  version: 1 | 2;
   iv: number[];
   ciphertext: number[];
 }
@@ -93,7 +94,7 @@ function normalizeSecret(value: string) {
 function isEncryptedSecret(value: unknown): value is EncryptedSecret {
   if (!value || typeof value !== "object") return false;
   const candidate = value as Partial<EncryptedSecret>;
-  return candidate.version === 1
+  return (candidate.version === 1 || candidate.version === 2)
     && Array.isArray(candidate.iv)
     && candidate.iv.length === 12
     && candidate.iv.every((byte) => Number.isInteger(byte) && byte >= 0 && byte <= 255)
@@ -110,9 +111,13 @@ export async function saveApiKey(apiKey: string): Promise<void> {
     const key = await getOrCreateDeviceKey();
     const iv = crypto.getRandomValues(new Uint8Array(12));
     const data = new TextEncoder().encode(secret);
-    const ciphertext = await crypto.subtle.encrypt({ name: "AES-GCM", iv }, key, data);
+    const ciphertext = await crypto.subtle.encrypt(
+      { name: "AES-GCM", iv, additionalData: SECRET_CONTEXT },
+      key,
+      data,
+    );
     await setValue<EncryptedSecret>(SECRET_ID, {
-      version: 1,
+      version: 2,
       iv: Array.from(iv),
       ciphertext: Array.from(new Uint8Array(ciphertext)),
     });
@@ -138,12 +143,19 @@ export async function loadApiKey(): Promise<string | null> {
     }
 
     const decrypted = await crypto.subtle.decrypt(
-      { name: "AES-GCM", iv: new Uint8Array(encrypted.iv) },
+      {
+        name: "AES-GCM",
+        iv: new Uint8Array(encrypted.iv),
+        ...(encrypted.version === 2 ? { additionalData: SECRET_CONTEXT } : {}),
+      },
       key,
       new Uint8Array(encrypted.ciphertext),
     );
     const secret = normalizeSecret(new TextDecoder().decode(decrypted));
     volatileSecret = secret;
+
+    // Existing v1 records remain readable and are transparently rebound to this app context.
+    if (encrypted.version === 1) await saveApiKey(secret);
     return secret;
   } catch {
     try { await deleteValues([SECRET_ID]); } catch { /* Ignore blocked storage during recovery. */ }
