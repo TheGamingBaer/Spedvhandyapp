@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="SPEDV Mobile">
+  <defs>
+    <linearGradient id="g" x1="72" y1="52" x2="438" y2="458" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#4567ff"/>
+      <stop offset="1" stop-color="#9b6dff"/>
+    </linearGradient>
+    <filter id="s" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="22" stdDeviation="24" flood-color="#111827" flood-opacity=".32"/>
+    </filter>
+  </defs>
+  <rect width="512" height="512" rx="116" fill="#090b10"/>
+  <rect x="38" y="38" width="436" height="436" rx="102" fill="url(#g)" filter="url(#s)"/>
+  <path d="M139 175c0-31 25-56 56-56h124c26 0 47 21 47 47 0 10-3 20-9 28l-22 32h25c28 0 51 23 51 51v51c0 35-28 63-63 63H199c-34 0-62-28-62-62v-28h73v18c0 10 8 18 18 18h94c10 0 18-8 18-18v-15c0-10-8-18-18-18H195c-31 0-56-25-56-56v-75Zm78 4c0 9 7 16 16 16h54l18-26h-72c-9 0-16 7-16 16v-6Z" fill="white"/>
+  <circle cx="191" cy="397" r="22" fill="#090b10"/>
+  <circle cx="335" cy="397" r="22" fill="#090b10"/>
+</svg>
