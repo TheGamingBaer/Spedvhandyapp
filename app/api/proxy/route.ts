@@ -7,6 +7,9 @@ export const runtime = "nodejs";
 const DEFAULT_BASE = process.env.SPEDV_API_BASE_URL || "https://api.sped-v.de";
 const ALLOWED_HOSTS = new Set(["api.sped-v.de"]);
 const AUTH_REJECTION_STATUSES = new Set([401, 403]);
+const MAX_FILE_BASE64_LENGTH = 14_000_000;
+const MAX_MULTIPART_FILES = 5;
+const MAX_UPSTREAM_BYTES = 12 * 1024 * 1024;
 
 const authSchema = z.object({
   key: z.string().min(1).max(4096),
@@ -19,7 +22,7 @@ const fileSchema = z.object({
   name: z.string().min(1).max(256),
   filename: z.string().min(1).max(512),
   type: z.string().max(256).optional(),
-  dataBase64: z.string().min(1),
+  dataBase64: z.string().min(1).max(MAX_FILE_BASE64_LENGTH),
 });
 
 const requestSchema = z.object({
@@ -32,7 +35,7 @@ const requestSchema = z.object({
   auth: authSchema.optional(),
   multipart: z.object({
     fields: z.record(z.string(), z.string()).default({}),
-    files: z.array(fileSchema).default([]),
+    files: z.array(fileSchema).max(MAX_MULTIPART_FILES).default([]),
   }).optional(),
 });
 
@@ -47,7 +50,12 @@ type AuthAttempt = {
 
 function safeFilename(contentDisposition: string | null) {
   const match = contentDisposition?.match(/filename\*?=(?:UTF-8''|")?([^";]+)/i);
-  return match?.[1] ? decodeURIComponent(match[1].replace(/"/g, "")) : undefined;
+  if (!match?.[1]) return undefined;
+  try {
+    return decodeURIComponent(match[1].replace(/"/g, ""));
+  } catch {
+    return match[1].replace(/"/g, "");
+  }
 }
 
 function createBaseTarget(payload: Payload) {
@@ -63,7 +71,7 @@ function createBaseHeaders(payload: Payload) {
   const headers = new Headers({ Accept: "application/json, text/plain, */*" });
   for (const [key, value] of Object.entries(payload.headers || {})) {
     const normalized = key.toLowerCase();
-    if (["host", "cookie", "origin", "referer", "content-length"].includes(normalized)) continue;
+    if (["host", "cookie", "origin", "referer", "content-length", "connection", "transfer-encoding"].includes(normalized)) continue;
     headers.set(key, value);
   }
   return headers;
@@ -117,6 +125,31 @@ function extractToken(value: unknown, depth = 0): string | undefined {
   return undefined;
 }
 
+function assertAllowedResponse(response: Response) {
+  if (response.status >= 300 && response.status < 400) {
+    if (response.body) void response.body.cancel().catch(() => undefined);
+    throw new Error("SPEDV hat mit einer nicht erlaubten Weiterleitung geantwortet.");
+  }
+
+  const declaredLength = Number(response.headers.get("content-length"));
+  if (Number.isFinite(declaredLength) && declaredLength > MAX_UPSTREAM_BYTES) {
+    if (response.body) void response.body.cancel().catch(() => undefined);
+    throw new Error("Die SPEDV-Antwort ist für die mobile App zu groß.");
+  }
+}
+
+async function readLimitedBuffer(response: Response) {
+  const buffer = Buffer.from(await response.arrayBuffer());
+  if (buffer.byteLength > MAX_UPSTREAM_BYTES) {
+    throw new Error("Die SPEDV-Antwort ist für die mobile App zu groß.");
+  }
+  return buffer;
+}
+
+async function readLimitedText(response: Response) {
+  return (await readLimitedBuffer(response)).toString("utf8");
+}
+
 async function exchangeClientKey(key: string): Promise<string | undefined> {
   const target = new URL("/v1/auth/clientkey", DEFAULT_BASE);
   target.searchParams.set("key", key);
@@ -125,16 +158,17 @@ async function exchangeClientKey(key: string): Promise<string | undefined> {
     method: "GET",
     headers: { Accept: "application/json, text/plain, */*" },
     cache: "no-store",
-    redirect: "follow",
+    redirect: "manual",
     signal: AbortSignal.timeout(30_000),
   });
+  assertAllowedResponse(response);
 
   if (!response.ok) {
     if (response.body) await response.body.cancel().catch(() => undefined);
     return undefined;
   }
 
-  const text = await response.text();
+  const text = await readLimitedText(response);
   if (!text) return undefined;
   try {
     return extractToken(JSON.parse(text));
@@ -187,14 +221,16 @@ function buildDirectAuthAttempts(payload: Payload): AuthAttempt[] {
 }
 
 async function executeRequest(payload: Payload, target: URL, headers: Headers) {
-  return fetch(target, {
+  const response = await fetch(target, {
     method: payload.method,
     headers,
     body: createBody(payload, headers),
     cache: "no-store",
-    redirect: "follow",
+    redirect: "manual",
     signal: AbortSignal.timeout(30_000),
   });
+  assertAllowedResponse(response);
+  return response;
 }
 
 async function fetchWithAuthFallback(payload: Payload, targetTemplate: URL, headersTemplate: Headers) {
@@ -263,12 +299,12 @@ async function handler(request: NextRequest) {
     let data: unknown = null;
     let binary: { base64: string; filename?: string } | undefined;
     if (contentType.includes("application/json") || contentType.includes("+json")) {
-      const text = await upstream.text();
+      const text = await readLimitedText(upstream);
       try { data = text ? JSON.parse(text) : null; } catch { data = text; }
     } else if (contentType.startsWith("text/") || contentType.includes("xml") || contentType.includes("html")) {
-      data = await upstream.text();
+      data = await readLimitedText(upstream);
     } else {
-      const buffer = Buffer.from(await upstream.arrayBuffer());
+      const buffer = await readLimitedBuffer(upstream);
       binary = {
         base64: buffer.toString("base64"),
         filename: safeFilename(upstream.headers.get("content-disposition")),
