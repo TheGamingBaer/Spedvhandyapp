@@ -1,0 +1,59 @@
+name: Inspect official SPEDV authentication
+
+on:
+  push:
+    paths:
+      - .github/workflows/fetch-spedv-auth.yml
+
+permissions:
+  contents: write
+
+jobs:
+  inspect:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Fetch official OpenAPI specification
+        run: curl --fail --silent --show-error --location https://api.sped-v.de/swagger/v1/swagger.json --output /tmp/spedv-openapi.json
+      - name: Build authentication report
+        run: |
+          node <<'NODE'
+          const fs = require('fs');
+          const spec = JSON.parse(fs.readFileSync('/tmp/spedv-openapi.json', 'utf8'));
+          const paths = spec.paths || {};
+          const operations = [];
+          for (const [path, item] of Object.entries(paths)) {
+            for (const method of ['get','post','put','patch','delete']) {
+              const op = item?.[method];
+              if (!op) continue;
+              const text = `${path} ${op.summary || ''} ${op.operationId || ''} ${(op.tags || []).join(' ')}`;
+              if (/auth|login|token|key|steam|register|account|user/i.test(text)) {
+                operations.push({ path, method: method.toUpperCase(), summary: op.summary, operationId: op.operationId, security: op.security, parameters: op.parameters, requestBody: op.requestBody });
+              }
+            }
+          }
+          const report = {
+            fetchedAt: new Date().toISOString(),
+            openapi: spec.openapi,
+            swagger: spec.swagger,
+            title: spec.info?.title,
+            version: spec.info?.version,
+            servers: spec.servers,
+            host: spec.host,
+            basePath: spec.basePath,
+            schemes: spec.schemes,
+            topLevelSecurity: spec.security,
+            securitySchemes: spec.components?.securitySchemes || spec.securityDefinitions || {},
+            authRelatedOperations: operations,
+          };
+          fs.mkdirSync('docs', { recursive: true });
+          fs.writeFileSync('docs/spedv-auth-report.json', JSON.stringify(report, null, 2));
+          fs.writeFileSync('docs/spedv-openapi.json', JSON.stringify(spec, null, 2));
+          NODE
+      - name: Commit official API report
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add docs/spedv-auth-report.json docs/spedv-openapi.json
+          git commit -m "Inspect official SPEDV authentication" || exit 0
+          git push
