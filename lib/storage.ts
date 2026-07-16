@@ -5,6 +5,7 @@ const MAX_CACHED_RESPONSES = 200;
 const MAX_RESPONSE_CACHE_BYTES = 3_500_000;
 const MAX_SINGLE_RESPONSE_BYTES = 750_000;
 const RESPONSE_CACHE_TTL_MS = 24 * 60 * 60 * 1000;
+const memoryFallback = new Map<string, string>();
 
 function storageKey(key: string) {
   return `${PREFIX}${key}`;
@@ -12,13 +13,16 @@ function storageKey(key: string) {
 
 function remove(key: string) {
   if (typeof window === "undefined") return;
-  try { localStorage.removeItem(storageKey(key)); } catch { /* Storage may be unavailable in private mode. */ }
+  const fullKey = storageKey(key);
+  memoryFallback.delete(fullKey);
+  try { localStorage.removeItem(fullKey); } catch { /* Storage may be unavailable in private mode. */ }
 }
 
 function read<T>(key: string, fallback: T): T {
   if (typeof window === "undefined") return fallback;
+  const fullKey = storageKey(key);
   try {
-    const raw = localStorage.getItem(storageKey(key));
+    const raw = localStorage.getItem(fullKey) ?? memoryFallback.get(fullKey);
     return raw ? JSON.parse(raw) as T : fallback;
   } catch {
     remove(key);
@@ -28,7 +32,22 @@ function read<T>(key: string, fallback: T): T {
 
 function write<T>(key: string, value: T) {
   if (typeof window === "undefined") return;
-  try { localStorage.setItem(storageKey(key), JSON.stringify(value)); } catch { /* Storage quota or private-mode limitation. */ }
+  const fullKey = storageKey(key);
+  let serialized: string;
+  try {
+    serialized = JSON.stringify(value);
+  } catch {
+    return;
+  }
+
+  try {
+    localStorage.setItem(fullKey, serialized);
+    memoryFallback.delete(fullKey);
+  } catch {
+    // Safari private mode, blocked storage and exhausted quota must not make
+    // freshly loaded data disappear from the running app session.
+    memoryFallback.set(fullKey, serialized);
+  }
 }
 
 function serializedSize(value: unknown) {
@@ -168,6 +187,9 @@ export function clearAccountData() {
 
 export function clearLocalData() {
   if (typeof window === "undefined") return;
+  for (const key of [...memoryFallback.keys()]) {
+    if (key.startsWith(PREFIX)) memoryFallback.delete(key);
+  }
   try {
     Object.keys(localStorage).filter((key) => key.startsWith(PREFIX)).forEach((key) => localStorage.removeItem(key));
   } catch { /* Storage may be unavailable in private mode. */ }
