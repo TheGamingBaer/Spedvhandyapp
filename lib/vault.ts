@@ -2,20 +2,33 @@ const DB_NAME = "spedv-mobile-vault";
 const STORE = "vault";
 const KEY_ID = "device-key";
 const SECRET_ID = "api-secret";
+const MAX_SECRET_LENGTH = 8_192;
+const SECRET_CONTEXT = new TextEncoder().encode("spedv-mobile:api-secret:v2");
+const USER_DATA_STORAGE_KEYS = ["auth", "favorites", "history", "responses", "write-enabled"];
 
 interface EncryptedSecret {
+  version: 1 | 2;
   iv: number[];
   ciphertext: number[];
 }
 
+let volatileSecret: string | null = null;
+let deviceKeyPromise: Promise<CryptoKey> | null = null;
+
 function openDb(): Promise<IDBDatabase> {
   return new Promise((resolve, reject) => {
+    if (typeof indexedDB === "undefined") {
+      reject(new Error("IndexedDB ist auf diesem Gerät nicht verfügbar."));
+      return;
+    }
+
     const request = indexedDB.open(DB_NAME, 1);
     request.onupgradeneeded = () => {
       if (!request.result.objectStoreNames.contains(STORE)) request.result.createObjectStore(STORE);
     };
     request.onsuccess = () => resolve(request.result);
-    request.onerror = () => reject(request.error);
+    request.onerror = () => reject(request.error ?? new Error("Der sichere Gerätespeicher konnte nicht geöffnet werden."));
+    request.onblocked = () => reject(new Error("Der sichere Gerätespeicher ist vorübergehend blockiert."));
   });
 }
 
@@ -27,6 +40,7 @@ async function getValue<T>(key: string): Promise<T | undefined> {
     request.onsuccess = () => resolve(request.result as T | undefined);
     request.onerror = () => reject(request.error);
     tx.oncomplete = () => db.close();
+    tx.onabort = () => { db.close(); reject(tx.error); };
   });
 }
 
@@ -36,21 +50,33 @@ async function setValue<T>(key: string, value: T): Promise<void> {
     const tx = db.transaction(STORE, "readwrite");
     tx.objectStore(STORE).put(value, key);
     tx.oncomplete = () => { db.close(); resolve(); };
-    tx.onerror = () => reject(tx.error);
+    tx.onerror = () => { db.close(); reject(tx.error); };
+    tx.onabort = () => { db.close(); reject(tx.error); };
   });
 }
 
-async function deleteValue(key: string): Promise<void> {
+async function deleteValues(keys: string[]): Promise<void> {
   const db = await openDb();
   return new Promise((resolve, reject) => {
     const tx = db.transaction(STORE, "readwrite");
-    tx.objectStore(STORE).delete(key);
+    const store = tx.objectStore(STORE);
+    keys.forEach((key) => store.delete(key));
     tx.oncomplete = () => { db.close(); resolve(); };
-    tx.onerror = () => reject(tx.error);
+    tx.onerror = () => { db.close(); reject(tx.error); };
+    tx.onabort = () => { db.close(); reject(tx.error); };
   });
 }
 
-async function getOrCreateDeviceKey(): Promise<CryptoKey> {
+function clearCachedUserData() {
+  if (typeof window === "undefined") return;
+  try {
+    for (const key of USER_DATA_STORAGE_KEYS) localStorage.removeItem(`spedv-mobile:${key}`);
+  } catch {
+    // Logout must remain reliable when browser storage is unavailable or blocked.
+  }
+}
+
+async function createOrLoadDeviceKey(): Promise<CryptoKey> {
   const existing = await getValue<CryptoKey>(KEY_ID);
   if (existing) return existing;
   const key = await crypto.subtle.generateKey({ name: "AES-GCM", length: 256 }, false, ["encrypt", "decrypt"]);
@@ -58,34 +84,102 @@ async function getOrCreateDeviceKey(): Promise<CryptoKey> {
   return key;
 }
 
+function getOrCreateDeviceKey(): Promise<CryptoKey> {
+  if (!deviceKeyPromise) {
+    deviceKeyPromise = createOrLoadDeviceKey().catch((error) => {
+      deviceKeyPromise = null;
+      throw error;
+    });
+  }
+  return deviceKeyPromise;
+}
+
+function normalizeSecret(value: string) {
+  const secret = value.trim();
+  if (!secret) throw new Error("Der SPEDV-Hauptschlüssel darf nicht leer sein.");
+  if (secret.length > MAX_SECRET_LENGTH) throw new Error("Der SPEDV-Hauptschlüssel ist ungewöhnlich lang.");
+  return secret;
+}
+
+function isEncryptedSecret(value: unknown): value is EncryptedSecret {
+  if (!value || typeof value !== "object") return false;
+  const candidate = value as Partial<EncryptedSecret>;
+  return (candidate.version === 1 || candidate.version === 2)
+    && Array.isArray(candidate.iv)
+    && candidate.iv.length === 12
+    && candidate.iv.every((byte) => Number.isInteger(byte) && byte >= 0 && byte <= 255)
+    && Array.isArray(candidate.ciphertext)
+    && candidate.ciphertext.length > 0
+    && candidate.ciphertext.every((byte) => Number.isInteger(byte) && byte >= 0 && byte <= 255);
+}
+
 export async function saveApiKey(apiKey: string): Promise<void> {
-  const key = await getOrCreateDeviceKey();
-  const iv = crypto.getRandomValues(new Uint8Array(12));
-  const data = new TextEncoder().encode(apiKey);
-  const ciphertext = await crypto.subtle.encrypt({ name: "AES-GCM", iv }, key, data);
-  await setValue<EncryptedSecret>(SECRET_ID, {
-    iv: Array.from(iv),
-    ciphertext: Array.from(new Uint8Array(ciphertext)),
-  });
+  const secret = normalizeSecret(apiKey);
+  volatileSecret = secret;
+
+  try {
+    const key = await getOrCreateDeviceKey();
+    const iv = crypto.getRandomValues(new Uint8Array(12));
+    const data = new TextEncoder().encode(secret);
+    const ciphertext = await crypto.subtle.encrypt(
+      { name: "AES-GCM", iv, additionalData: SECRET_CONTEXT },
+      key,
+      data,
+    );
+    await setValue<EncryptedSecret>(SECRET_ID, {
+      version: 2,
+      iv: Array.from(iv),
+      ciphertext: Array.from(new Uint8Array(ciphertext)),
+    });
+  } catch {
+    // Restricted Safari/private-mode storage must not block the current session.
+    // The key remains in memory only and disappears when the app is closed.
+  }
 }
 
 export async function loadApiKey(): Promise<string | null> {
   try {
-    const encrypted = await getValue<EncryptedSecret>(SECRET_ID);
-    if (!encrypted) return null;
+    const encrypted = await getValue<unknown>(SECRET_ID);
+    if (!encrypted) return volatileSecret;
+    if (!isEncryptedSecret(encrypted)) {
+      await deleteValues([SECRET_ID]);
+      return volatileSecret;
+    }
+
     const key = await getValue<CryptoKey>(KEY_ID);
-    if (!key) return null;
+    if (!key) {
+      await deleteValues([SECRET_ID]);
+      return volatileSecret;
+    }
+
     const decrypted = await crypto.subtle.decrypt(
-      { name: "AES-GCM", iv: new Uint8Array(encrypted.iv) },
+      {
+        name: "AES-GCM",
+        iv: new Uint8Array(encrypted.iv),
+        ...(encrypted.version === 2 ? { additionalData: SECRET_CONTEXT } : {}),
+      },
       key,
       new Uint8Array(encrypted.ciphertext),
     );
-    return new TextDecoder().decode(decrypted);
+    const secret = normalizeSecret(new TextDecoder().decode(decrypted));
+    volatileSecret = secret;
+
+    // Existing v1 records remain readable and are transparently rebound to this app context.
+    if (encrypted.version === 1) await saveApiKey(secret);
+    return secret;
   } catch {
-    return null;
+    try { await deleteValues([SECRET_ID]); } catch { /* Ignore blocked storage during recovery. */ }
+    return volatileSecret;
   }
 }
 
 export async function clearApiKey(): Promise<void> {
-  await deleteValue(SECRET_ID);
+  volatileSecret = null;
+  deviceKeyPromise = null;
+  clearCachedUserData();
+  try {
+    await deleteValues([SECRET_ID, KEY_ID]);
+  } catch {
+    // Logging out must still succeed when IndexedDB is unavailable or blocked.
+  }
 }

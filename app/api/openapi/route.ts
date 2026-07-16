@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import bundledSpec from "@/docs/spedv-openapi.json";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -17,14 +18,15 @@ function isAllowed(url: URL) {
   return url.protocol === "https:" && ALLOWED_HOSTS.has(url.hostname);
 }
 
-function prioritizeOfficialApiKeyProbe(spec: Record<string, any>) {
+function prepareSpec(input: Record<string, any>) {
+  const spec = structuredClone(input);
   const probePath = "/v1/auth/claims/apikey";
   const probe = spec.paths?.[probePath];
-  if (!probe?.get) return spec;
-
-  probe.get.summary = "User account API key status";
-  probe.get.description = "Official SPEDV endpoint used to validate X-Api-Key authentication.";
-  spec.paths = { [probePath]: probe, ...spec.paths };
+  if (probe?.get) {
+    probe.get.summary = "SPEDV-Verbindung prüfen";
+    probe.get.description = "Prüft den persönlichen SPEDV-Hauptschlüssel.";
+    spec.paths = { [probePath]: probe, ...spec.paths };
+  }
   return spec;
 }
 
@@ -50,17 +52,18 @@ export async function GET(request: NextRequest) {
     try {
       const response = await fetch(url, {
         cache: "no-store",
-        headers: { Accept: "application/json, application/yaml, text/yaml;q=0.9, */*;q=0.5" },
+        headers: { Accept: "application/json, */*;q=0.5" },
         signal: AbortSignal.timeout(12_000),
       });
       attempts.push({ url: url.toString(), status: response.status });
       if (!response.ok) continue;
       const text = await response.text();
-      const parsed = prioritizeOfficialApiKeyProbe(JSON.parse(text));
+      const parsed = prepareSpec(JSON.parse(text));
       if (!parsed?.paths) continue;
       return NextResponse.json(parsed, {
         headers: {
           "Cache-Control": "no-store",
+          "X-SPEDV-Spec-Source": "live",
           "X-SPEDV-Spec-URL": url.toString(),
         },
       });
@@ -69,11 +72,12 @@ export async function GET(request: NextRequest) {
     }
   }
 
-  return NextResponse.json(
-    {
-      error: "Die SPEDV-OpenAPI-Beschreibung konnte nicht automatisch geladen werden.",
-      attempts,
+  const fallback = prepareSpec(bundledSpec as Record<string, any>);
+  return NextResponse.json(fallback, {
+    headers: {
+      "Cache-Control": "public, max-age=300, stale-while-revalidate=86400",
+      "X-SPEDV-Spec-Source": "bundled",
+      "X-SPEDV-Live-Attempts": String(attempts.length),
     },
-    { status: 502 },
-  );
+  });
 }

@@ -55,6 +55,7 @@ export interface ApiCallResult {
     base64: string;
     filename?: string;
   };
+  authUsed?: string;
   elapsedMs: number;
   timestamp: string;
 }
