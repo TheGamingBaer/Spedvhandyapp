@@ -70,6 +70,11 @@ export function ModuleSheet({ module, cachedResponses, loadingEndpointIds, onRef
   const isLoading = automatic.some((endpoint) => loadingEndpointIds.includes(endpoint.id));
   const closeButtonRef = useRef<HTMLButtonElement>(null);
   const sheetRef = useRef<HTMLDivElement>(null);
+  const onCloseRef = useRef(onClose);
+
+  useEffect(() => {
+    onCloseRef.current = onClose;
+  }, [onClose]);
 
   useEffect(() => {
     const previousOverflow = document.body.style.overflow;
@@ -80,7 +85,7 @@ export function ModuleSheet({ module, cachedResponses, loadingEndpointIds, onRef
     const handleKeyDown = (event: KeyboardEvent) => {
       if (event.key === "Escape") {
         event.preventDefault();
-        onClose();
+        onCloseRef.current();
         return;
       }
 
@@ -107,7 +112,7 @@ export function ModuleSheet({ module, cachedResponses, loadingEndpointIds, onRef
       window.removeEventListener("keydown", handleKeyDown);
       previousFocus?.focus();
     };
-  }, [onClose]);
+  }, []);
 
   return (
     <div className="sheet-backdrop" role="presentation" onMouseDown={(event) => event.target === event.currentTarget && onClose()}>
