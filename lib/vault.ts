@@ -4,6 +4,7 @@ const KEY_ID = "device-key";
 const SECRET_ID = "api-secret";
 const MAX_SECRET_LENGTH = 8_192;
 const SECRET_CONTEXT = new TextEncoder().encode("spedv-mobile:api-secret:v2");
+const USER_DATA_STORAGE_KEYS = ["auth", "history", "responses", "write-enabled"];
 
 interface EncryptedSecret {
   version: 1 | 2;
@@ -64,6 +65,15 @@ async function deleteValues(keys: string[]): Promise<void> {
     tx.onerror = () => { db.close(); reject(tx.error); };
     tx.onabort = () => { db.close(); reject(tx.error); };
   });
+}
+
+function clearCachedUserData() {
+  if (typeof window === "undefined") return;
+  try {
+    for (const key of USER_DATA_STORAGE_KEYS) localStorage.removeItem(`spedv-mobile:${key}`);
+  } catch {
+    // Logout must remain reliable when browser storage is unavailable or blocked.
+  }
 }
 
 async function createOrLoadDeviceKey(): Promise<CryptoKey> {
@@ -166,6 +176,7 @@ export async function loadApiKey(): Promise<string | null> {
 export async function clearApiKey(): Promise<void> {
   volatileSecret = null;
   deviceKeyPromise = null;
+  clearCachedUserData();
   try {
     await deleteValues([SECRET_ID, KEY_ID]);
   } catch {
