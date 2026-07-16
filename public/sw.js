@@ -1,4 +1,5 @@
-const CACHE = "spedv-mobile-shell-v4";
+const CACHE_PREFIX = "spedv-mobile-";
+const CACHE = `${CACHE_PREFIX}shell-v5`;
 const SHELL = ["/", "/manifest.webmanifest", "/icons/spedv-mobile.svg"];
 const MAX_ENTRIES = 60;
 const NETWORK_TIMEOUT_MS = 8000;
@@ -39,7 +40,7 @@ async function handleNavigation(request) {
     await cacheResponse("/", response);
     return response;
   } catch {
-    return (await caches.match("/")) || Response.error();
+    return (await caches.match("/", { cacheName: CACHE })) || Response.error();
   }
 }
 
@@ -54,7 +55,8 @@ async function updateAsset(request) {
 }
 
 async function handleAsset(event, request) {
-  const cached = await caches.match(request);
+  const cache = await caches.open(CACHE);
+  const cached = await cache.match(request);
   const network = updateAsset(request);
 
   if (cached) {
@@ -73,18 +75,33 @@ function shouldBypass(request, url) {
   return false;
 }
 
-self.addEventListener("install", (event) => {
-  event.waitUntil(
-    caches.open(CACHE)
-      .then((cache) => cache.addAll(SHELL))
-      .then(() => self.skipWaiting()),
+async function precacheShell() {
+  const cache = await caches.open(CACHE);
+  const results = await Promise.allSettled(
+    SHELL.map(async (url) => {
+      const response = await fetch(url, { cache: "reload" });
+      if (!isCacheable(response)) throw new Error(`Nicht cachebar: ${url}`);
+      await cache.put(url, response);
+    }),
   );
+
+  if (!results.some((result) => result.status === "fulfilled")) {
+    throw new Error("Kein Bestandteil der App-Oberfläche konnte gespeichert werden.");
+  }
+}
+
+self.addEventListener("install", (event) => {
+  event.waitUntil(precacheShell().then(() => self.skipWaiting()));
 });
 
 self.addEventListener("activate", (event) => {
   event.waitUntil(
     caches.keys()
-      .then((keys) => Promise.all(keys.filter((key) => key !== CACHE).map((key) => caches.delete(key))))
+      .then((keys) => Promise.all(
+        keys
+          .filter((key) => key.startsWith(CACHE_PREFIX) && key !== CACHE)
+          .map((key) => caches.delete(key)),
+      ))
       .then(() => self.clients.claim()),
   );
 });
