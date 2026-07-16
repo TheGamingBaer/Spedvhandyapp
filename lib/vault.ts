@@ -4,7 +4,7 @@ const KEY_ID = "device-key";
 const SECRET_ID = "api-secret";
 const MAX_SECRET_LENGTH = 8_192;
 const SECRET_CONTEXT = new TextEncoder().encode("spedv-mobile:api-secret:v2");
-const USER_DATA_STORAGE_KEYS = ["auth", "history", "responses", "write-enabled"];
+const USER_DATA_STORAGE_KEYS = ["auth", "favorites", "history", "responses", "write-enabled"];
 
 interface EncryptedSecret {
   version: 1 | 2;
