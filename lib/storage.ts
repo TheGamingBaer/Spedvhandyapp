@@ -161,6 +161,11 @@ export function setCachedResponse(endpoint: ApiEndpoint, result: ApiCallResult) 
 
   write("responses", Object.fromEntries(retained));
 }
+
+export function clearAccountData() {
+  for (const key of ["favorites", "history", "auth", "write-enabled", "responses"]) remove(key);
+}
+
 export function clearLocalData() {
   if (typeof window === "undefined") return;
   try {
